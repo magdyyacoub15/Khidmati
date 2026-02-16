@@ -1,0 +1,164 @@
+Analyzing manger3...                                            
+
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1014:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1099:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1106:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1141:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1188:21 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\absence_page.dart:1188:42 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\absence_page.dart:1198:44 - use_build_context_synchronously
+   info - Statements in an if should be enclosed in a block - lib\pages\absence_page.dart:1252:9 - curly_braces_in_flow_control_structures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\absence_page.dart:1469:41 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\pages\absence_page.dart:1677:60 - unnecessary_brace_in_string_interps
+warning - The operand can't be 'null', so the condition is always 'false' - lib\pages\admin_page.dart:324:22 - unnecessary_null_comparison
+warning - Dead code - lib\pages\admin_page.dart:324:31 - dead_code
+   info - Statements in an if should be enclosed in a block - lib\pages\admin_page.dart:420:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps - lib\pages\admin_page.dart:571:35 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\admin_page.dart:593:35 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\admin_page.dart:740:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\admin_page.dart:742:54 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\admin_page.dart:876:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\admin_page.dart:878:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\admin_page.dart:892:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\admin_page.dart:1015:7 - curly_braces_in_flow_control_structures
+warning - Unused import: 'package:appwrite/models.dart' - lib\pages\attendance_grade_selector_page.dart:4:8 - unused_import
+   info - Parameter 'key' could be a super parameter - lib\pages\attendance_grade_selector_page.dart:12:9 - use_super_parameters
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:462:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps - lib\pages\attendance_page.dart:554:7 - use_build_context_synchronously
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:659:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:666:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:690:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:696:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\attendance_page.dart:880:9 - curly_braces_in_flow_control_structures
+   info - The 'child' argument should be last in widget constructor invocations - lib\pages\attendance_page.dart:900:15 - sort_child_properties_last
+   info - Unnecessary braces in a string interpolation - lib\pages\attendance_stats_page.dart:280:20 - unnecessary_brace_in_string_interps
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\attendance_stats_page.dart:282:41 - deprecated_member_use
+warning - The value of the local variable 'absentCount' isn't used - lib\pages\attendance_stats_page.dart:672:43 - unused_local_variable
+   info - Unnecessary braces in a string interpolation - lib\pages\attendance_stats_page.dart:698:94 - unnecessary_brace_in_string_interps
+   info - Don't use 'BuildContext's across async gaps - lib\pages\attendance_stats_page.dart:766:7 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\attendance_type_selector_page.dart:360:52 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:632:35 - deprecated_member_use
+   info - Unnecessary use of string interpolation - lib\pages\birthdays_page.dart:893:35 - unnecessary_string_interpolations
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:917:34 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:924:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:926:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:927:31 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:955:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:994:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:1148:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:1150:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:1240:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\birthdays_page.dart:1283:59 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\create_group_page.dart:270:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\create_group_page.dart:285:45 - deprecated_member_use
+   info - The import of 'package:flutter/services.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\pages\dashboard_page.dart:3:8 - unnecessary_import
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\dashboard_page.dart:565:51 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\dashboard_page.dart:568:51 - use_build_context_synchronously
+warning - Unused import: 'package:appwrite/models.dart' - lib\pages\detailed_report_page.dart:3:8 - unused_import
+   info - 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:317:13 - deprecated_member_use
+   info - 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:318:13 - deprecated_member_use
+   info - 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:323:13 - deprecated_member_use
+   info - 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:324:13 - deprecated_member_use
+   info - 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:329:13 - deprecated_member_use
+   info - 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre - lib\pages\detailed_report_page.dart:330:13 - deprecated_member_use
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\individual_visited_page.dart:402:22 - sized_box_for_whitespace
+warning - The value of the field '_account' isn't used - lib\pages\individual_visited_page.dart:528:17 - unused_field
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\individual_visited_page.dart:1116:22 - sized_box_for_whitespace
+warning - The value of the field '_currentUserId' isn't used - lib\pages\individual_visited_page.dart:1429:11 - unused_field
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\individual_visited_page.dart:1971:21 - sized_box_for_whitespace
+   info - The 'child' argument should be last in widget constructor invocations - lib\pages\individual_visited_page.dart:2031:23 - sort_child_properties_last
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\individual_visited_page.dart:2207:35 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\individual_visited_page.dart:2695:43 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\individual_visited_page.dart:2696:45 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\individual_visited_page.dart:2712:43 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\individual_visited_page.dart:2731:52 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\join_group_page.dart:315:45 - deprecated_member_use
+   info - The import of 'package:flutter/widgets.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\pages\kids_list_page.dart:3:8 - unnecessary_import
+   info - Don't invoke 'print' in production code - lib\pages\kids_list_page.dart:230:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\pages\kids_list_page.dart:276:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\pages\kids_list_page.dart:280:7 - avoid_print
+   info - Statements in an if should be enclosed in a block - lib\pages\kids_list_page.dart:363:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\kids_list_page.dart:468:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps - lib\pages\kids_list_page.dart:485:7 - use_build_context_synchronously
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\kids_list_page.dart:521:33 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\kids_list_page.dart:584:33 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\kids_list_page.dart:724:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps - lib\pages\kids_list_page.dart:745:7 - use_build_context_synchronously
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\kids_list_page.dart:781:33 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\kids_list_page.dart:844:33 - deprecated_member_use
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\kids_list_page.dart:1213:19 - sized_box_for_whitespace
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\login_page.dart:205:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\login_page.dart:356:46 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:89:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:156:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:378:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:391:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:439:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\meetings_page.dart:472:33 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\meetings_page.dart:479:31 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\meetings_page.dart:481:19 - use_build_context_synchronously
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:566:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\meetings_page.dart:625:37 - curly_braces_in_flow_control_structures
+   info - 'ButtonBar' is deprecated and shouldn't be used. Use OverflowBar instead. This feature was deprecated after v3.21.0-10.0.pre - lib\pages\meetings_page.dart:738:41 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\pages\preparation_page.dart:244:17 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\preparation_page.dart:443:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\preparation_page.dart:461:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\preparation_page.dart:514:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\preparation_page.dart:662:37 - curly_braces_in_flow_control_structures
+   info - 'ButtonBar' is deprecated and shouldn't be used. Use OverflowBar instead. This feature was deprecated after v3.21.0-10.0.pre - lib\pages\preparation_page.dart:789:41 - deprecated_member_use
+   info - The import of 'package:flutter/services.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\pages\profile_page.dart:4:8 - unnecessary_import
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\profile_page.dart:42:11 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\profile_page.dart:52:11 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:361:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:364:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:428:50 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:454:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:457:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:476:59 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:495:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:498:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:664:28 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\profile_page.dart:666:47 - deprecated_member_use
+warning - Unused import: 'package:intl/intl.dart' - lib\pages\study_tracking_page.dart:5:8 - unused_import
+   info - Statements in an if should be enclosed in a block - lib\pages\study_tracking_page.dart:855:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps - lib\pages\study_tracking_page.dart:863:11 - use_build_context_synchronously
+   info - Statements in an if should be enclosed in a block - lib\pages\study_tracking_page.dart:915:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\pages\study_tracking_page.dart:920:9 - curly_braces_in_flow_control_structures
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\study_tracking_page.dart:946:42 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\study_tracking_page.dart:955:44 - use_build_context_synchronously
+warning - The value of the field '_isLoading' isn't used - lib\pages\study_tracking_page.dart:1155:8 - unused_field
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\study_tracking_page.dart:1325:42 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\study_tracking_page.dart:1334:44 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\subscription_page.dart:72:9 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\subscription_page.dart:80:7 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\subscription_page.dart:109:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\subscription_page.dart:176:20 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:254:46 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:265:46 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:307:44 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:314:44 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:161:40 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:426:46 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:430:23 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:492:46 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:496:23 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:535:46 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:539:23 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\visited_page.dart:621:40 - use_build_context_synchronously
+   info - The 'child' argument should be last in widget constructor invocations - lib\pages\visited_page.dart:782:15 - sort_child_properties_last
+   info - Unnecessary braces in a string interpolation - lib\pages\visited_stats_page.dart:179:50 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\pages\visited_stats_page.dart:273:20 - unnecessary_brace_in_string_interps
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\visited_stats_page.dart:275:41 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\pages\visited_stats_page.dart:600:68 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\pages\visited_stats_page.dart:616:71 - unnecessary_brace_in_string_interps
+   info - Unnecessary use of 'toList' in a spread - lib\pages\visited_stats_page.dart:631:46 - unnecessary_to_list_in_spreads
+warning - The value of the local variable 'event' isn't used - lib\services\ai_insight_service.dart:342:24 - unused_local_variable
+   info - The 'if' statement could be replaced by a null-aware assignment - lib\services\data_cache_service.dart:71:5 - prefer_conditional_assignment
+warning - Unused import: 'package:appwrite/models.dart' - lib\services\grade_service.dart:2:8 - unused_import
+   info - Don't invoke 'print' in production code - lib\services\grade_service.dart:45:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\status_service.dart:43:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\status_service.dart:85:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\status_service.dart:113:7 - avoid_print
+   info - Statements in an if should be enclosed in a block - lib\services\subscription_service.dart:143:9 - curly_braces_in_flow_control_structures
+   info - Don't invoke 'print' in production code - lib\services\user_service.dart:58:7 - avoid_print
+

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "799738779122",
+    "project_id": "neww-744f6",
+    "storage_bucket": "neww-744f6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:799738779122:android:2bdbf95f45ce7f7b9c476b",
+        "android_client_info": {
+          "package_name": "com.manger.m"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC0AzdwdwUVJYOH6YDFyYKfSM5GSJ53srQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
