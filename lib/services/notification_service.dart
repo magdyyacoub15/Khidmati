@@ -27,6 +27,7 @@ class NotificationService {
   StreamSubscription? _realtimeSubscription;
 
   Future<void> init() async {
+    if (kIsWeb) return; // ⚡ Skip on Web
     // 1. تهيئة المنطقة الزمنية
     tz.initializeTimeZones();
     try {
@@ -83,6 +84,7 @@ class NotificationService {
   }
 
   Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+    if (kIsWeb) return [];
     return await _notificationsPlugin.pendingNotificationRequests();
   }
 
@@ -136,6 +138,7 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
+    if (kIsWeb) return;
     const NotificationDetails notificationDetails = NotificationDetails(
       android: AndroidNotificationDetails(
         'birthday_channel',
@@ -161,6 +164,7 @@ class NotificationService {
     required String body,
     required DateTime scheduledDate,
   }) async {
+    if (kIsWeb) return;
     await _notificationsPlugin.zonedSchedule(
       id,
       title,
@@ -242,6 +246,7 @@ class NotificationService {
   }
 
   Future<void> cancelAll() async {
+    if (kIsWeb) return;
     await _notificationsPlugin.cancelAll();
   }
 

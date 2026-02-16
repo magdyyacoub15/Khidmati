@@ -160,6 +160,7 @@ class _AttendancePageState extends State<AttendancePage> {
         SyncService().startConnectivityListener(widget.groupId);
       }
     });
+    _subscribeToKidsList(); // 🚀 Live Kids Updates
   }
 
   Future<void> _checkSubscriptionStatus() async {
@@ -212,6 +213,7 @@ class _AttendancePageState extends State<AttendancePage> {
   void dispose() {
     _roleSubscription?.close();
     _statusSubscription?.close();
+    _kidsSubscription?.close();
     SyncService().stopConnectivityListener(); // 🚀 Stop Listener
     super.dispose();
   }
@@ -344,6 +346,8 @@ class _AttendancePageState extends State<AttendancePage> {
     }
   }
 
+  RealtimeSubscription? _kidsSubscription; // Add field
+
   void _subscribeToStatus() {
     _statusSubscription = _realtime.subscribe([
       'databases.$databaseId.collections.$attendanceStatusCollectionId.documents',
@@ -369,6 +373,51 @@ class _AttendancePageState extends State<AttendancePage> {
         });
         _syncStatusCache();
       }
+    });
+  }
+
+  void _subscribeToKidsList() {
+    final String collectionId = (widget.type == "خدام")
+        ? servantsCollectionId
+        : studentsCollectionId;
+
+    _kidsSubscription = _realtime.subscribe([
+      'databases.$databaseId.collections.$collectionId.documents',
+    ]);
+
+    _kidsSubscription!.stream.listen((event) {
+      if (!mounted) return;
+      final payload = event.payload;
+
+      // Filter by Group and Grade
+      if (payload['groupId'] != widget.groupId) return;
+
+      final pGrade = _normalizeGradeText(payload['grade'] ?? '');
+      final wGrade = _normalizeGradeText(widget.grade);
+
+      // Strict match for grade (or if grade is part of it)
+      if (pGrade != wGrade &&
+          !pGrade.contains(wGrade) &&
+          !wGrade.contains(pGrade)) {
+        return;
+      }
+
+      final isDelete = event.events.any((e) => e.contains('.delete'));
+      final kid = Kid.fromAppwrite(models.Document.fromMap(payload));
+
+      setState(() {
+        if (isDelete) {
+          _baseKidsList.removeWhere((k) => k.id == kid.id);
+        } else {
+          // Check if exists
+          final index = _baseKidsList.indexWhere((k) => k.id == kid.id);
+          if (index != -1) {
+            _baseKidsList[index] = kid; // Update
+          } else {
+            _baseKidsList.add(kid); // Add
+          }
+        }
+      });
     });
   }
 

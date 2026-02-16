@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,12 +37,16 @@ Future<void> main() async {
   await initializeDateFormatting('ar', null);
 
   // تهيئة الإشعارات المحلية
-  await NotificationService().init();
-  NotificationService().listenToBroadcasts();
+  if (!kIsWeb) {
+    await NotificationService().init();
+    NotificationService().listenToBroadcasts();
+  }
 
-  // تهيئة المهام الخلفية (Background Tasks)
-  await BackgroundTaskService.initialize();
-  await BackgroundTaskService.scheduleDailyRecommendations();
+  // تهيئة المهام الخلفية (Background Tasks) - لا تعمل على الويب
+  if (!kIsWeb) {
+    await BackgroundTaskService.initialize();
+    await BackgroundTaskService.scheduleDailyRecommendations();
+  }
 
   final prefs = await SharedPreferences.getInstance();
   final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
@@ -70,12 +75,35 @@ class MyApp extends StatelessWidget {
             useMaterial3: true, // Recommended for better scaling control
           ),
           builder: (context, child) {
-            return MediaQuery(
+            // Apply font scaling
+            final scaledChild = MediaQuery(
               data: MediaQuery.of(
                 context,
               ).copyWith(textScaler: TextScaler.linear(fontSizeMultiplier)),
               child: child!,
             );
+
+            if (kIsWeb) {
+              return Center(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 500),
+                  height: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 20,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: scaledChild,
+                ),
+              );
+            }
+
+            return scaledChild;
           },
           initialRoute: isLoggedIn ? '/dashboard' : '/login',
           routes: {

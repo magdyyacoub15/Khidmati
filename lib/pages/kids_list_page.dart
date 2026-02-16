@@ -263,44 +263,29 @@ class _KidsListPageState extends State<KidsListPage> {
     _kidsSubscription = _realtime.subscribe([channel]);
 
     _kidsSubscription!.stream.listen((event) async {
+      if (!mounted) return;
       final payload = event.payload;
+
+      // 1. Group Check
       if (payload['groupId'] != _myGroupId) return;
 
       final kidId = payload['\$id'];
       final events = event.events;
 
+      // 2. Delete Event
       if (events.any((e) => e.endsWith('.delete'))) {
-        if (mounted) {
-          setState(() {
-            _liveKids.removeWhere((k) => k.id == kidId);
-            _updateDerivedLists();
-            DataCacheService().cacheKidsList(
-              _myGroupId,
-              widget.grade,
-              _liveKids,
-            );
-          });
-        }
+        setState(() {
+          _liveKids.removeWhere((k) => k.id == kidId);
+          _updateDerivedLists();
+          DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
+        });
         return;
       }
 
+      // 3. Update/Create Event
       try {
-        // ⚡ OPTIMIZATION: Use payload directly instead of fetching
-        // This makes updates (like visited status) instant on other devices
         final freshKid = Kid.fromMap(payload, kidId);
-
-        // Ensure the payload has the grade, otherwise fallback to fetch
-        if (freshKid.grade == null) {
-          // Fallback if payload is partial (rare in Appwrite)
-          final doc = await _databases.getDocument(
-            databaseId: databaseId,
-            collectionId: studentsCollectionId,
-            documentId: kidId,
-          );
-          _processKidUpdate(Kid.fromAppwrite(doc), kidId);
-        } else {
-          _processKidUpdate(freshKid, kidId);
-        }
+        _processKidUpdate(freshKid, kidId);
       } catch (e) {
         debugPrint("Error processing realtime update: $e");
       }
@@ -313,14 +298,22 @@ class _KidsListPageState extends State<KidsListPage> {
     final String kidGrade = _normalizeGradeText(freshKid.grade ?? '');
     final String currentGrade = _normalizeGradeText(widget.grade);
 
+    // Flexible Matching logic (Like AttendancePage)
+    final bool isGradeMatch =
+        kidGrade == currentGrade ||
+        kidGrade.contains(currentGrade) ||
+        currentGrade.contains(kidGrade);
+
     setState(() {
       final index = _liveKids.indexWhere((k) => k.id == kidId);
 
       if (index != -1) {
-        if (kidGrade != currentGrade) {
+        // Existing kid
+        if (!isGradeMatch) {
+          // Moved to another grade -> Remove
           _liveKids.removeAt(index);
         } else {
-          // Preserve local image path if existing (optimistic UI)
+          // Update details (preserve local image if needed)
           final existing = _liveKids[index];
           if (existing.localImagePath != null &&
               freshKid.localImagePath == null) {
@@ -332,16 +325,12 @@ class _KidsListPageState extends State<KidsListPage> {
           }
         }
       } else {
-        if (kidGrade == currentGrade) {
+        // New kid
+        if (isGradeMatch) {
           _liveKids.insert(0, freshKid);
         }
       }
       _updateDerivedLists();
-      DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
-    });
-
-    // Cache Update
-    Future(() {
       DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
     });
   }

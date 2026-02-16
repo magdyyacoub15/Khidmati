@@ -69,6 +69,7 @@ class BackgroundTaskService {
 
   /// Initialize WorkManager and schedule daily tasks
   static Future<void> initialize() async {
+    if (kIsWeb) return; // ⚡ Skip on Web
     try {
       await Workmanager().initialize(callbackDispatcher);
       debugPrint('✅ WorkManager initialized');
@@ -80,6 +81,7 @@ class BackgroundTaskService {
   /// Schedule daily recommendation generation task
   /// Runs every day at midnight (generation) AND periodically (check)
   static Future<void> scheduleDailyRecommendations() async {
+    if (kIsWeb) return; // ⚡ Skip on Web
     try {
       // 1. Generation Task (Midnight)
       await Workmanager().registerPeriodicTask(
@@ -118,6 +120,7 @@ class BackgroundTaskService {
 
   /// Cancel all scheduled tasks
   static Future<void> cancelAllTasks() async {
+    if (kIsWeb) return;
     try {
       await Workmanager().cancelAll();
       debugPrint('✅ All background tasks cancelled');
