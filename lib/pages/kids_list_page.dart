@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
 import 'package:flutter/services.dart';
 import 'package:appwrite/appwrite.dart';
 // import 'package:appwrite/models.dart' as models;
@@ -10,6 +11,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../l10n/app_translations.dart';
 import '../services/appwrite_service.dart';
 import '../services/user_service.dart';
 import '../services/permission_service.dart';
@@ -35,11 +37,11 @@ class KidsListPage extends StatefulWidget {
 
 class _KidsListPageState extends State<KidsListPage> {
   final List<String> _phoneOwners = [
-    "الاب",
-    "الام",
-    "الاخ",
-    "الاخت",
-    "المخدوم",
+    'phone_owner_father',
+    'phone_owner_mother',
+    'phone_owner_brother',
+    'phone_owner_sister',
+    'phone_owner_kid',
   ];
 
   late Client _client;
@@ -71,8 +73,7 @@ class _KidsListPageState extends State<KidsListPage> {
     super.initState();
     _client = AppwriteService().client;
     _databases = Databases(_client);
-    _databases = Databases(_client);
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _account = AppwriteService().account; // 🚀 Init Account
 
     _loadUserData();
@@ -248,7 +249,9 @@ class _KidsListPageState extends State<KidsListPage> {
         });
       } else if (mounted) {
         setState(() {
-          _error = "حدث خطأ في جلب البيانات: $e";
+          _error = 'error_fetching_data'
+              .tr(context)
+              .replaceFirst('%s', e.toString());
           _isLoading = false;
         });
       }
@@ -285,48 +288,86 @@ class _KidsListPageState extends State<KidsListPage> {
       // 3. Update/Create Event
       try {
         final freshKid = Kid.fromMap(payload, kidId);
-        _processKidUpdate(freshKid, kidId);
+        _processKidUpdate(freshKid, kidId, payload); // 🚀 Pass payload
       } catch (e) {
         debugPrint("Error processing realtime update: $e");
       }
     });
   }
 
-  void _processKidUpdate(Kid freshKid, String kidId) {
+  void _processKidUpdate(
+    Kid freshKid,
+    String kidId,
+    Map<String, dynamic> payload,
+  ) {
     if (!mounted) return;
 
-    final String kidGrade = _normalizeGradeText(freshKid.grade ?? '');
+    final String? payloadGrade = payload['grade'];
     final String currentGrade = _normalizeGradeText(widget.grade);
 
-    // Flexible Matching logic (Like AttendancePage)
-    final bool isGradeMatch =
-        kidGrade == currentGrade ||
-        kidGrade.contains(currentGrade) ||
-        currentGrade.contains(kidGrade);
+    // 🚀 Robust Matching:
+    // If 'grade' is NOT in payload, it's a partial update (like isVisited).
+    // In this case, we assume the kid still belongs to this page.
+    // If 'grade' IS in payload, we check if it matches.
+    bool isGradeMatch = true;
+    if (payloadGrade != null) {
+      final String kidGrade = _normalizeGradeText(payloadGrade);
+      isGradeMatch =
+          kidGrade == currentGrade ||
+          kidGrade.contains(currentGrade) ||
+          currentGrade.contains(kidGrade);
+    }
+
+    // 🚀 Check if there's a pending optimistic update by name as fallback
+    // If the server returns a new real ID, we might need to match by name
+    int index = _liveKids.indexWhere((k) => k.id == kidId);
+    if (index == -1) {
+      final nameInPayload = payload['name'];
+      if (nameInPayload != null) {
+        index = _liveKids.indexWhere(
+          (k) =>
+              k.name == nameInPayload &&
+              (k.id.startsWith('pending_') || k.id.length < 20),
+        ); // Approximate check for temporary IDs
+        if (index != -1) {
+          debugPrint(
+            "📡 Kids Update: Found pending kid by name: $nameInPayload",
+          );
+        }
+      }
+    }
 
     setState(() {
-      final index = _liveKids.indexWhere((k) => k.id == kidId);
-
       if (index != -1) {
         // Existing kid
         if (!isGradeMatch) {
-          // Moved to another grade -> Remove
+          // Explicit grade change -> Remove
           _liveKids.removeAt(index);
         } else {
-          // Update details (preserve local image if needed)
+          // Update details (Merge partial payload data with existing kid)
           final existing = _liveKids[index];
-          if (existing.localImagePath != null &&
-              freshKid.localImagePath == null) {
-            _liveKids[index] = freshKid.copyWithStatus(
-              localImagePath: existing.localImagePath,
-            );
-          } else {
-            _liveKids[index] = freshKid;
-          }
+
+          _liveKids[index] = existing.copyWithStatus(
+            isVisited: payload['isVisited'],
+            visitedBy: payload['visitedBy'],
+            name: payload['name'],
+            address: payload['address'],
+            grade: payload['grade'],
+            photoUrl: payload['photoUrl'],
+            phoneRequired: payload['phoneRequired'],
+            phoneOptional: payload['phoneOptional'],
+            phoneRequiredOwner: payload['phoneRequiredOwner'],
+            phoneOptionalOwner: payload['phoneOptionalOwner'],
+            locationUrl: payload['locationUrl'],
+            dateOfBirth: payload['dateOfBirth'] != null
+                ? DateTime.tryParse(payload['dateOfBirth'].toString())
+                : null,
+          );
         }
       } else {
         // New kid
         if (isGradeMatch) {
+          // If it's a new kid, we need the full data from freshKid
           _liveKids.insert(0, freshKid);
         }
       }
@@ -376,10 +417,16 @@ class _KidsListPageState extends State<KidsListPage> {
   }
 
   Future<void> _toggleVisited(Kid kid) async {
+    // Evaluate translations before async gap
+    final String subscriptionEndedMsg = 'subscription_ended_visit'.tr(context);
+    final String noPermissionCancelVisitMsg = 'no_permission_cancel_visit'.tr(
+      context,
+    );
+
     if (!_canWrite) {
-      _showSnackbar(
-        "⚠️ انتهى الاشتراك. يرجى التجديد لتتمكن من تسجيل الافتقاد.",
-      );
+      if (mounted) {
+        _showSnackbar(subscriptionEndedMsg);
+      }
       return;
     }
 
@@ -390,7 +437,9 @@ class _KidsListPageState extends State<KidsListPage> {
         !newIsVisited &&
         !_isAdmin &&
         kid.visitedBy != currentUserName) {
-      _showSnackbar("⚠️ ليس لديك صلاحية لإلغاء حالة الافتقاد لهذا المخدوم.");
+      if (mounted) {
+        _showSnackbar(noPermissionCancelVisitMsg);
+      }
       return;
     }
 
@@ -447,7 +496,8 @@ class _KidsListPageState extends State<KidsListPage> {
 
   void _showAddKidDialog() async {
     if (!await PermissionService.canWrite(_myGroupId)) {
-      _showSnackbar("⚠️ انتهت صلاحية الاشتراك");
+      if (!mounted) return;
+      _showSnackbar('subscription_expired'.tr(context));
       return;
     }
 
@@ -465,7 +515,7 @@ class _KidsListPageState extends State<KidsListPage> {
     String? selectedRequiredOwner;
     String? selectedOptionalOwner;
     DateTime? selectedDateOfBirth;
-    File? selectedImage;
+    XFile? selectedImage; // 🚀 Changed from File?
 
     await showDialog(
       context: context,
@@ -473,7 +523,7 @@ class _KidsListPageState extends State<KidsListPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text("إضافة مخدوم جديد"),
+              title: Text('add_new_kid_title'.tr(context)),
               content: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -491,7 +541,10 @@ class _KidsListPageState extends State<KidsListPage> {
                           radius: 40,
                           backgroundColor: Colors.grey.shade200,
                           backgroundImage: selectedImage != null
-                              ? FileImage(selectedImage!)
+                              ? (kIsWeb
+                                    ? NetworkImage(selectedImage!.path)
+                                    : FileImage(File(selectedImage!.path))
+                                          as ImageProvider)
                               : null,
                           child: selectedImage == null
                               ? const Icon(
@@ -506,12 +559,17 @@ class _KidsListPageState extends State<KidsListPage> {
 
                       TextFormField(
                         controller: nameController,
-                        decoration: const InputDecoration(labelText: "الاسم"),
-                        validator: (val) => val!.isEmpty ? "الاسم مطلوب" : null,
+                        decoration: InputDecoration(
+                          labelText: 'name_label'.tr(context),
+                        ),
+                        validator: (val) =>
+                            val!.isEmpty ? 'required_field'.tr(context) : null,
                       ),
                       TextFormField(
                         controller: addressController,
-                        decoration: const InputDecoration(labelText: "العنوان"),
+                        decoration: InputDecoration(
+                          labelText: 'address_label'.tr(context),
+                        ),
                         // validator: (val) => val!.isEmpty ? "العنوان مطلوب" : null, // Made optional
                       ),
 
@@ -535,8 +593,8 @@ class _KidsListPageState extends State<KidsListPage> {
 
                       TextFormField(
                         controller: locationController,
-                        decoration: const InputDecoration(
-                          labelText: "رابط الموقع (Google Maps)",
+                        decoration: InputDecoration(
+                          labelText: 'location_link_label'.tr(context),
                         ),
                       ),
 
@@ -554,7 +612,7 @@ class _KidsListPageState extends State<KidsListPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("إلغاء"),
+                  child: Text('cancel_btn'.tr(context)),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -573,7 +631,7 @@ class _KidsListPageState extends State<KidsListPage> {
                       );
                     }
                   },
-                  child: const Text("إضافة"),
+                  child: Text('add'.tr(context)),
                 ),
               ],
             );
@@ -592,7 +650,7 @@ class _KidsListPageState extends State<KidsListPage> {
     String? phoneOptionalOwner,
     DateTime? dateOfBirth,
     String? locationUrl,
-    File? imageFile,
+    XFile? imageFile, // 🚀 Changed from File?
   }) async {
     // Optimistic Add
     final docId = ID.unique(); // 🚀 Consistent ID
@@ -667,7 +725,7 @@ class _KidsListPageState extends State<KidsListPage> {
       DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
 
       if (mounted) {
-        _showSnackbar("✅ تم إضافة المخدوم بنجاح");
+        _showSnackbar('kid_added_success'.tr(context));
       }
     } catch (e) {
       debugPrint("Add error: $e. Saving to pending operations.");
@@ -706,14 +764,14 @@ class _KidsListPageState extends State<KidsListPage> {
   }
 
   void _showEditKidDialog(Kid kid) async {
+    final subscriptionExpiredMsg = 'subscription_expired'.tr(context);
+
     if (!await PermissionService.canWrite(_myGroupId)) {
-      _showSnackbar("⚠️ انتهت صلاحية الاشتراك");
+      if (mounted) _showSnackbar(subscriptionExpiredMsg);
       return;
     }
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: kid.name);
@@ -741,7 +799,7 @@ class _KidsListPageState extends State<KidsListPage> {
     }
 
     DateTime? selectedDateOfBirth = kid.dateOfBirth;
-    File? selectedImage;
+    XFile? selectedImage; // 🚀 Changed from File?
     bool isDeletePhoto = false;
 
     await showDialog(
@@ -750,7 +808,7 @@ class _KidsListPageState extends State<KidsListPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text("تعديل بيانات المخدوم"),
+              title: Text('edit_kid_title'.tr(context)),
               content: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -772,7 +830,10 @@ class _KidsListPageState extends State<KidsListPage> {
                           radius: 40,
                           backgroundColor: Colors.grey.shade200,
                           backgroundImage: selectedImage != null
-                              ? FileImage(selectedImage!)
+                              ? (kIsWeb
+                                    ? NetworkImage(selectedImage!.path)
+                                    : FileImage(File(selectedImage!.path))
+                                          as ImageProvider)
                               : (kid.photoUrl != null &&
                                             kid.photoUrl!.isNotEmpty &&
                                             !isDeletePhoto // Changed from _isDeletePhoto
@@ -800,9 +861,9 @@ class _KidsListPageState extends State<KidsListPage> {
                       if (kid.photoUrl != null &&
                           !isDeletePhoto) // Changed from _isDeletePhoto
                         TextButton.icon(
-                          label: const Text(
-                            "حذف الصورة",
-                            style: TextStyle(color: Colors.red),
+                          label: Text(
+                            'delete_photo'.tr(context),
+                            style: const TextStyle(color: Colors.red),
                           ),
                           icon: const Icon(
                             Icons.delete,
@@ -817,12 +878,17 @@ class _KidsListPageState extends State<KidsListPage> {
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: nameController,
-                        decoration: const InputDecoration(labelText: "الاسم"),
-                        validator: (v) => v!.isEmpty ? "مطلوب" : null,
+                        decoration: InputDecoration(
+                          labelText: 'name_label'.tr(context),
+                        ),
+                        validator: (v) =>
+                            v!.isEmpty ? 'required_field'.tr(context) : null,
                       ),
                       TextFormField(
                         controller: addressController,
-                        decoration: const InputDecoration(labelText: "العنوان"),
+                        decoration: InputDecoration(
+                          labelText: 'address_label'.tr(context),
+                        ),
                         // validator: (v) => v!.isEmpty ? "مطلوب" : null, // Made Optional
                       ),
 
@@ -846,8 +912,8 @@ class _KidsListPageState extends State<KidsListPage> {
 
                       TextFormField(
                         controller: locationController,
-                        decoration: const InputDecoration(
-                          labelText: "رابط الموقع",
+                        decoration: InputDecoration(
+                          labelText: 'location_link_label'.tr(context),
                         ),
                       ),
                       _buildDatePicker(
@@ -862,7 +928,7 @@ class _KidsListPageState extends State<KidsListPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("إلغاء"),
+                  child: Text('cancel_btn'.tr(context)),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -881,9 +947,15 @@ class _KidsListPageState extends State<KidsListPage> {
                         imageFile: selectedImage,
                         isDeletePhoto: isDeletePhoto,
                       );
+                    } else {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('name_required'.tr(context))),
+                        );
+                      }
                     }
                   },
-                  child: const Text("حفظ"),
+                  child: Text('save'.tr(context)),
                 ),
               ],
             );
@@ -903,7 +975,7 @@ class _KidsListPageState extends State<KidsListPage> {
     String? phoneOptionalOwner,
     DateTime? dateOfBirth,
     String? locationUrl,
-    File? imageFile,
+    XFile? imageFile, // 🚀 Changed from File?
     bool isDeletePhoto = false,
   }) async {
     // Optimistic
@@ -939,6 +1011,7 @@ class _KidsListPageState extends State<KidsListPage> {
           await ImageService().deleteImageByUrl(kid.photoUrl);
         }
         final result = await ImageService().uploadImage(imageFile);
+        if (!mounted) return;
         if (result != null) newPhotoUrl = result['url'];
       }
 
@@ -968,7 +1041,11 @@ class _KidsListPageState extends State<KidsListPage> {
       // 🚀 Instant Cache Update (PERSISTENCE)
       DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
 
-      _showSnackbar("✅ تم التعديل بنجاح");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('kid_updated_success'.tr(context))),
+        );
+      }
     } catch (e) {
       debugPrint("Edit error: $e. Saving to pending operations.");
 
@@ -999,13 +1076,16 @@ class _KidsListPageState extends State<KidsListPage> {
 
       // Ensure cache is updated with the updated kid
       DataCacheService().cacheKidsList(_myGroupId, widget.grade, _liveKids);
-      _showSnackbar("ℹ️ تم حفظ التعديلات محلياً.");
+      if (mounted) _showSnackbar('changes_saved_locally'.tr(context));
     }
   }
 
   Future<void> _deleteKid(String kidId) async {
+    final readonlyExpiredMsg = 'readonly_expired'.tr(context);
+    final kidDeletedSuccessMsg = 'kid_deleted_success'.tr(context);
+
     if (!_canWrite) {
-      _showSnackbar("⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط.");
+      if (mounted) _showSnackbar(readonlyExpiredMsg);
       return;
     }
     // ⚡ Optimistic Delete
@@ -1035,7 +1115,7 @@ class _KidsListPageState extends State<KidsListPage> {
       );
 
       // (Already handled by _updateDerivedLists in setState)
-      _showSnackbar("🗑️ تم حذف المخدوم بنجاح");
+      if (mounted) _showSnackbar(kidDeletedSuccessMsg);
     } catch (e) {
       debugPrint("Delete error: $e. Saving to pending operations.");
 
@@ -1074,7 +1154,9 @@ class _KidsListPageState extends State<KidsListPage> {
           child: DropdownButtonFormField<String>(
             isExpanded: true, // Prevents internal overflow
             decoration: InputDecoration(
-              labelText: "مالك $labelSuffix",
+              labelText: 'owner_label_prefix'
+                  .tr(context)
+                  .replaceFirst('%s', labelSuffix),
               labelStyle: const TextStyle(fontSize: 12),
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
             ),
@@ -1084,7 +1166,7 @@ class _KidsListPageState extends State<KidsListPage> {
                   (e) => DropdownMenuItem(
                     value: e,
                     child: Text(
-                      e,
+                      e.tr(context),
                       style: const TextStyle(fontSize: 12),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1092,7 +1174,8 @@ class _KidsListPageState extends State<KidsListPage> {
                 )
                 .toList(),
             onChanged: onChanged,
-            validator: (v) => isRequired && v == null ? "مطلوب" : null,
+            validator: (v) =>
+                isRequired && v == null ? 'required_field'.tr(context) : null,
           ),
         ),
         const SizedBox(width: 8),
@@ -1101,11 +1184,14 @@ class _KidsListPageState extends State<KidsListPage> {
           child: TextFormField(
             controller: controller,
             decoration: InputDecoration(
-              labelText: isRequired ? "موبايل (اجباري)" : "موبايل (اختياري)",
+              labelText: isRequired
+                  ? 'mobile_required'.tr(context)
+                  : 'mobile_optional'.tr(context),
             ),
             keyboardType: TextInputType.phone,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            validator: (v) => isRequired && v!.isEmpty ? "مطلوب" : null,
+            validator: (v) =>
+                isRequired && v!.isEmpty ? 'required_field'.tr(context) : null,
           ),
         ),
       ],
@@ -1119,7 +1205,7 @@ class _KidsListPageState extends State<KidsListPage> {
   ) {
     return Row(
       children: [
-        const Text("تاريخ الميلاد: "),
+        Text('birth_date_label'.tr(context)),
         TextButton(
           onPressed: () async {
             final d = await showDatePicker(
@@ -1133,7 +1219,7 @@ class _KidsListPageState extends State<KidsListPage> {
           },
           child: Text(
             selected == null
-                ? "تعيين"
+                ? 'set_btn'.tr(context)
                 : DateFormat('yyyy-MM-dd').format(selected),
           ),
         ),
@@ -1141,26 +1227,33 @@ class _KidsListPageState extends State<KidsListPage> {
     );
   }
 
-  Future<File?> _pickImage(BuildContext context) async {
+  Future<XFile?> _pickImage(BuildContext context) async {
     try {
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (!context.mounted) return null;
       if (image != null) {
+        // 🚀 Skip Cropper on Web for now (or use Web UI settings if needed)
+        // For simplicity and avoiding Web Cropper issues if not set up, we return image directly on Web
+        if (kIsWeb) return image;
+
+        final imageEditTitle = 'image_edit'.tr(context);
+
         CroppedFile? croppedFile = await ImageCropper().cropImage(
           sourcePath: image.path,
           uiSettings: [
             AndroidUiSettings(
-              toolbarTitle: 'تعديل الصورة',
+              toolbarTitle: imageEditTitle,
               toolbarColor: Colors.deepOrange,
               toolbarWidgetColor: Colors.white,
               initAspectRatio: CropAspectRatioPreset.square,
               lockAspectRatio: false,
             ),
-            IOSUiSettings(title: 'تعديل الصورة'),
+            IOSUiSettings(title: imageEditTitle),
           ],
         );
         if (croppedFile != null) {
-          return File(croppedFile.path);
+          return XFile(croppedFile.path);
         }
       }
     } catch (e) {
@@ -1176,6 +1269,9 @@ class _KidsListPageState extends State<KidsListPage> {
   }
 
   void _openMap(String? url, String address) async {
+    final cannotOpenMapMsg = 'cannot_open_map'.tr(context);
+    final noAddressRegisteredMsg = 'no_address_registered'.tr(context);
+
     if (url != null && url.trim().isNotEmpty) {
       final uri = Uri.parse(
         url.trim().startsWith('http') ? url.trim() : 'https://${url.trim()}',
@@ -1196,10 +1292,10 @@ class _KidsListPageState extends State<KidsListPage> {
       try {
         await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
       } catch (e) {
-        _showSnackbar("تعذر فتح الخريطة: $e");
+        if (mounted) _showSnackbar(cannotOpenMapMsg);
       }
     } else {
-      _showSnackbar("لا يوجد عنوان مسجل");
+      if (mounted) _showSnackbar(noAddressRegisteredMsg);
     }
   }
 
@@ -1210,13 +1306,17 @@ class _KidsListPageState extends State<KidsListPage> {
     }
     if (_currentUserRole == 'error') {
       return Scaffold(
-        appBar: AppBar(title: const Text("خطأ")),
-        body: const Center(child: Text("يرجى اعادة التشغيل")),
+        appBar: AppBar(title: Text('error_title'.tr(context))),
+        body: Center(child: Text('please_restart'.tr(context))),
       );
     }
     if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(title: Text("المخدومين - ${widget.grade}")),
+        appBar: AppBar(
+          title: Text(
+            'kids_list_title'.tr(context).replaceFirst('%s', widget.grade),
+          ),
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -1224,15 +1324,27 @@ class _KidsListPageState extends State<KidsListPage> {
     // Safety check for empty list vs error
     if (_error.isNotEmpty && _liveKids.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: Text("المخدومين - ${widget.grade}")),
-        body: Center(child: Text("خطأ: $_error")),
+        appBar: AppBar(
+          title: Text(
+            'kids_list_title'.tr(context).replaceFirst('%s', widget.grade),
+          ),
+        ),
+        body: Center(
+          child: Text(
+            'error_fetching_data'.tr(context).replaceFirst('%s', _error),
+          ),
+        ),
       );
     }
 
     final double percentage = _total == 0 ? 0 : (_visitedCount / _total) * 100;
 
     return Scaffold(
-      appBar: AppBar(title: Text("المخدومين - ${widget.grade}")),
+      appBar: AppBar(
+        title: Text(
+          'kids_list_title'.tr(context).replaceFirst('%s', widget.grade),
+        ),
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -1250,7 +1362,11 @@ class _KidsListPageState extends State<KidsListPage> {
                   _buildProgressBar(percentage),
                   const SizedBox(height: 10),
                   Text(
-                    "تم افتقاد $_visitedCount من أصل $_total (${percentage.toStringAsFixed(1)}%)",
+                    'visited_count_msg'
+                        .tr(context)
+                        .replaceFirst('%s', _visitedCount.toString())
+                        .replaceFirst('%s', _total.toString())
+                        .replaceFirst('%s', percentage.toStringAsFixed(1)),
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
@@ -1261,7 +1377,7 @@ class _KidsListPageState extends State<KidsListPage> {
                   TextField(
                     onChanged: _onSearchChanged,
                     decoration: InputDecoration(
-                      hintText: "بحث اسم المخدوم...",
+                      hintText: 'search_kid_hint'.tr(context),
                       fillColor: Colors.white,
                       filled: true,
                       prefixIcon: const Icon(Icons.search),
@@ -1299,22 +1415,26 @@ class _KidsListPageState extends State<KidsListPage> {
                         ),
                         confirmDismiss: (direction) async {
                           if (!_canWrite) {
-                            _showSnackbar("⚠️ انتهت صلاحية الاشتراك");
+                            _showSnackbar('subscription_expired'.tr(context));
                             return false;
                           }
                           return await showDialog(
                             context: context,
                             builder: (ctx) => AlertDialog(
-                              title: const Text("تأكيد الحذف"),
-                              content: Text("هل أنت متأكد من حذف ${kid.name}؟"),
+                              title: Text('confirm_delete_title'.tr(context)),
+                              content: Text(
+                                'confirm_delete_kid_msg'
+                                    .tr(context)
+                                    .replaceFirst('%s', kid.name),
+                              ),
                               actions: [
                                 TextButton(
                                   onPressed: () => Navigator.pop(ctx, false),
-                                  child: const Text("إلغاء"),
+                                  child: Text('cancel_btn'.tr(context)),
                                 ),
                                 TextButton(
                                   onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text("حذف"),
+                                  child: Text('delete_btn'.tr(context)),
                                 ),
                               ],
                             ),
@@ -1399,14 +1519,15 @@ class _KidsListPageState extends State<KidsListPage> {
               backgroundColor: Colors.grey.shade200,
               backgroundImage:
                   (kid.localImagePath != null && kid.localImagePath!.isNotEmpty)
-                  ? FileImage(File(kid.localImagePath!))
+                  ? (kIsWeb
+                        ? NetworkImage(kid.localImagePath!)
+                        : FileImage(File(kid.localImagePath!)) as ImageProvider)
                   : ((kid.photoUrl != null && kid.photoUrl!.isNotEmpty)
-                            ? CachedNetworkImageProvider(
-                                kid.photoUrl!,
-                                cacheManager: ImageCacheService.instance,
-                              )
-                            : null)
-                        as ImageProvider?,
+                        ? CachedNetworkImageProvider(
+                            kid.photoUrl!,
+                            cacheManager: ImageCacheService.instance,
+                          )
+                        : null),
               child:
                   ((kid.photoUrl == null || kid.photoUrl!.isEmpty) &&
                       (kid.localImagePath == null ||
@@ -1442,13 +1563,11 @@ class _KidsListPageState extends State<KidsListPage> {
                         onTap: () => launchUrl(Uri.parse("tel:$p")),
                         onLongPress: () {
                           Clipboard.setData(ClipboardData(text: p));
-                          _showSnackbar("تم النسخ");
+                          _showSnackbar('copied_msg'.tr(context));
                         },
                         child: Chip(
-                          label: Text(
-                            kid.getPhoneWithOwner(p),
-                            style: const TextStyle(fontSize: 11),
-                          ),
+                          label: Text(kid.getPhoneWithOwner(context, p)),
+                          labelStyle: const TextStyle(fontSize: 11),
                           avatar: const Icon(Icons.phone, size: 14),
                           backgroundColor: Colors.blue.shade50,
                           padding: EdgeInsets.zero,
@@ -1461,7 +1580,11 @@ class _KidsListPageState extends State<KidsListPage> {
                     .toList(),
               ),
             Text(
-              kid.isVisited ? "✅ افتقده ${kid.visitedBy}" : "❌ لم يفتقد",
+              kid.isVisited
+                  ? 'visited_by_msg'
+                        .tr(context)
+                        .replaceFirst('%s', kid.visitedBy)
+                  : 'not_visited_msg'.tr(context),
               style: TextStyle(
                 color: kid.isVisited ? Colors.green : Colors.red,
                 fontWeight: FontWeight.bold,

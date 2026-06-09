@@ -1,11 +1,11 @@
 {
-    "name": "manger",
-    "short_name": "manger",
+    "name": "خدمتي",
+    "short_name": "خدمتي",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
+    "background_color": "#ffffff",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "خدمتي - لإدارة الحضور والافتقاد",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

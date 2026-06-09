@@ -11,8 +11,10 @@ import '../services/user_service.dart';
 import '../services/permission_service.dart';
 import '../services/appwrite_service.dart';
 import '../services/data_cache_service.dart';
+import '../services/sync_service.dart';
 import '../widgets/full_screen_image.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../l10n/app_translations.dart';
 
 class KidInfo {
   final String name;
@@ -37,31 +39,28 @@ class KidInfo {
     final Map<String, String> ownersMap = {};
 
     if (type == 'students') {
-      if (data['phoneRequired'] != null &&
-          data['phoneRequired'].toString().isNotEmpty) {
+      if (data['phoneRequired']?.toString().isNotEmpty ?? false) {
         final phone = data['phoneRequired'].toString();
         phoneList.add(phone);
-        ownersMap[phone] = data['phoneRequiredOwner'] ?? 'الولي';
+        ownersMap[phone] = data['phoneRequiredOwner'] ?? 'guardian';
       }
-      if (data['phoneOptional'] != null &&
-          data['phoneOptional'].toString().isNotEmpty) {
+      if (data['phoneOptional']?.toString().isNotEmpty ?? false) {
         final phone = data['phoneOptional'].toString();
         phoneList.add(phone);
-        ownersMap[phone] = data['phoneOptionalOwner'] ?? 'الولي';
+        ownersMap[phone] = data['phoneOptionalOwner'] ?? 'guardian';
       }
     } else {
       // Servants
-      if (data['phoneRequired'] != null &&
-          data['phoneRequired'].toString().isNotEmpty) {
+      if (data['phoneRequired']?.toString().isNotEmpty ?? false) {
         final phone = data['phoneRequired'].toString();
         phoneList.add(phone);
-        ownersMap[phone] = 'الخادم';
+        ownersMap[phone] = 'servant';
       }
     }
 
     return KidInfo(
-      name: data['name'] ?? 'اسم غير معروف',
-      address: data['address'] ?? 'بدون عنوان',
+      name: data['name'] ?? 'unknown_name',
+      address: data['address'] ?? 'no_address',
       phones: phoneList,
       phoneOwners: ownersMap,
       locationUrl: data['locationUrl'],
@@ -91,9 +90,10 @@ class KidInfo {
     );
   }
 
-  String getPhoneWithOwner(String phone) {
+  String getPhoneWithOwner(BuildContext context, String phone) {
     final owner = phoneOwners[phone];
-    return owner != null ? '$owner: $phone' : phone;
+    final ownerTranslated = owner?.tr(context);
+    return ownerTranslated != null ? '$ownerTranslated: $phone' : phone;
   }
 }
 
@@ -118,7 +118,7 @@ class AbsentKid {
     required this.address,
     required this.grade,
     this.note = '',
-    this.recordedBy = 'غير معروف',
+    this.recordedBy = 'unknown',
     required this.reportName,
     this.phones = const [],
     required this.phoneOwners,
@@ -149,9 +149,48 @@ class AbsentKid {
     );
   }
 
-  String getPhoneWithOwner(String phone) {
+  String getPhoneWithOwner(BuildContext context, String phone) {
     final owner = phoneOwners[phone];
-    return owner != null ? '$owner: $phone' : phone;
+    final ownerTranslated = owner?.tr(context);
+    return ownerTranslated != null ? '$ownerTranslated: $phone' : phone;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'address': address,
+      'grade': grade,
+      'note': note,
+      'recordedBy': recordedBy,
+      'reportName': reportName,
+      'phones': phones,
+      'phoneOwners': phoneOwners,
+      'isMissed': isMissed,
+      'missedBy': missedBy,
+      'absentReason': absentReason,
+      'locationUrl': locationUrl,
+      'reportId': reportId,
+      'photoUrl': photoUrl,
+    };
+  }
+
+  factory AbsentKid.fromJson(Map<String, dynamic> json) {
+    return AbsentKid(
+      name: json['name'] ?? '',
+      address: json['address'] ?? '',
+      grade: json['grade'] ?? '',
+      note: json['note'] ?? '',
+      recordedBy: json['recordedBy'] ?? '',
+      reportName: json['reportName'] ?? '',
+      phones: List<String>.from(json['phones'] ?? []),
+      phoneOwners: Map<String, String>.from(json['phoneOwners'] ?? {}),
+      isMissed: json['isMissed'] ?? false,
+      missedBy: json['missedBy'] ?? '',
+      absentReason: json['absentReason'] ?? '',
+      locationUrl: json['locationUrl'],
+      reportId: json['reportId'] ?? '',
+      photoUrl: json['photoUrl'],
+    );
   }
 }
 
@@ -209,24 +248,22 @@ class AbsentKidCard extends StatelessWidget {
       if (!launched) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("❌ تعذر فتح الرابط. تأكد من صحة الرابط المضاف."),
-            ),
+            SnackBar(content: Text('link_open_error'.tr(context))),
           );
         }
       }
     } catch (e) {
       debugPrint("Error parsing or launching locationUrl: $e");
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في الرابط: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("${'link_error'.tr(context)} $e")),
+        );
       }
     }
   }
 
   void _showPhoneOptions(BuildContext context, AbsentKid kid, String phone) {
-    final phoneWithOwner = kid.getPhoneWithOwner(phone);
+    final phoneWithOwner = kid.getPhoneWithOwner(context, phone);
 
     showModalBottomSheet(
       context: context,
@@ -285,7 +322,7 @@ class AbsentKidCard extends StatelessWidget {
                           FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              "خيارات الاتصال",
+                              'call_options'.tr(context),
                               style: TextStyle(
                                 fontSize:
                                     MediaQuery.of(context).size.width * 0.04,
@@ -342,7 +379,7 @@ class AbsentKidCard extends StatelessWidget {
                   children: [
                     _buildOptionButton(
                       context,
-                      "الاتصال بالرقم",
+                      'call_number'.tr(context),
                       Icons.phone,
                       Colors.green,
                       () {
@@ -352,7 +389,7 @@ class AbsentKidCard extends StatelessWidget {
                     ),
                     _buildOptionButton(
                       context,
-                      "رسالة واتساب",
+                      'whatsapp_message'.tr(context),
                       Icons.message,
                       const Color(0xFF25D366),
                       () {
@@ -362,7 +399,7 @@ class AbsentKidCard extends StatelessWidget {
                     ),
                     _buildOptionButton(
                       context,
-                      "نسخ الرقم",
+                      'copy_number'.tr(context),
                       Icons.content_copy,
                       Colors.orange,
                       () {
@@ -370,7 +407,9 @@ class AbsentKidCard extends StatelessWidget {
                         Clipboard.setData(ClipboardData(text: phone));
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("✅ تم نسخ الرقم: $phone"),
+                            content: Text(
+                              "${'number_copied'.tr(context)}: $phone",
+                            ),
                             backgroundColor: Colors.green,
                             behavior: SnackBarBehavior.floating,
                             duration: const Duration(seconds: 2),
@@ -400,7 +439,7 @@ class AbsentKidCard extends StatelessWidget {
                     side: BorderSide(color: Colors.grey.shade300),
                   ),
                   child: Text(
-                    "إلغاء",
+                    'cancel'.tr(context),
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width * 0.035,
                     ),
@@ -466,7 +505,9 @@ class AbsentKidCard extends StatelessWidget {
     final Color buttonColor = kid.isMissed
         ? Colors.grey.shade500
         : Colors.red.shade700;
-    final String buttonText = kid.isMissed ? "تم الافتقاد" : "افتقده";
+    final String buttonText = kid.isMissed
+        ? 'missed_status'.tr(context)
+        : 'miss_him'.tr(context);
 
     return Container(
       margin: EdgeInsets.symmetric(
@@ -501,7 +542,7 @@ class AbsentKidCard extends StatelessWidget {
 
             leading: GestureDetector(
               onTap: () {
-                if (kid.photoUrl != null && kid.photoUrl!.isNotEmpty) {
+                if (kid.photoUrl?.isNotEmpty ?? false) {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -524,7 +565,7 @@ class AbsentKidCard extends StatelessWidget {
                     border: Border.all(color: Colors.red.shade700, width: 2),
                   ),
                   child: ClipOval(
-                    child: (kid.photoUrl != null && kid.photoUrl!.isNotEmpty)
+                    child: (kid.photoUrl?.isNotEmpty ?? false)
                         ? CachedNetworkImage(
                             imageUrl: kid.photoUrl!,
                             fit: BoxFit.cover,
@@ -548,7 +589,7 @@ class AbsentKidCard extends StatelessWidget {
                         : Container(
                             color: Colors.red.shade100,
                             child: Icon(
-                              personType == "خدام"
+                              personType == 'servants'
                                   ? Icons.people_alt
                                   : Icons.person_off,
                               color: Colors.red.shade900,
@@ -580,9 +621,9 @@ class AbsentKidCard extends StatelessWidget {
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    personType == "خدام"
-                        ? "🌟 صف الخدمة: ${kid.grade}"
-                        : "📚 الصف: ${kid.grade}",
+                    personType == 'servants'
+                        ? "🌟 ${'service_grade'.tr(context)}: ${kid.grade}"
+                        : "📚 ${'grade'.tr(context)}: ${kid.grade}",
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width * 0.03,
                       color: Colors.blue.shade700,
@@ -614,7 +655,7 @@ class AbsentKidCard extends StatelessWidget {
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              "سبب الغياب: ${kid.absentReason}",
+                              "${'absence_reason'.tr(context)}: ${kid.absentReason}",
                               style: TextStyle(
                                 fontSize:
                                     MediaQuery.of(context).size.width * 0.028,
@@ -635,7 +676,10 @@ class AbsentKidCard extends StatelessWidget {
                     spacing: MediaQuery.of(context).size.width * 0.015,
                     runSpacing: MediaQuery.of(context).size.height * 0.005,
                     children: kid.phones.map((phone) {
-                      final phoneWithOwner = kid.getPhoneWithOwner(phone);
+                      final phoneWithOwner = kid.getPhoneWithOwner(
+                        context,
+                        phone,
+                      );
                       return InkWell(
                         onTap: () => _showPhoneOptions(context, kid, phone),
                         child: Container(
@@ -687,7 +731,7 @@ class AbsentKidCard extends StatelessWidget {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      "📞 لا يوجد رقم هاتف متاح",
+                      'no_phone_available'.tr(context),
                       style: TextStyle(
                         color: Colors.grey.shade600,
                         fontSize: MediaQuery.of(context).size.width * 0.03,
@@ -715,28 +759,21 @@ class AbsentKidCard extends StatelessWidget {
                             : Colors.grey.shade600,
                       ),
                       SizedBox(width: MediaQuery.of(context).size.width * 0.01),
-                      Expanded(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            kid.address,
-                            style: TextStyle(
-                              fontSize:
-                                  MediaQuery.of(context).size.width * 0.028,
-                              color:
-                                  (kid.locationUrl != null &&
-                                      kid.locationUrl!.isNotEmpty)
-                                  ? Colors.blue.shade700
-                                  : Colors.grey.shade700,
-                              decoration:
-                                  (kid.locationUrl != null &&
-                                      kid.locationUrl!.isNotEmpty)
-                                  ? TextDecoration.underline
-                                  : TextDecoration.none,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                      Flexible(
+                        child: Text(
+                          kid.address,
+                          style: TextStyle(
+                            fontSize: MediaQuery.of(context).size.width * 0.028,
+                            color: (kid.locationUrl?.isNotEmpty ?? false)
+                                ? Colors.blue.shade700
+                                : Colors.grey.shade700,
+                            decoration: (kid.locationUrl?.isNotEmpty ?? false)
+                                ? TextDecoration.underline
+                                : TextDecoration.none,
                           ),
+
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -747,64 +784,62 @@ class AbsentKidCard extends StatelessWidget {
           ),
 
           // ✅ زر تعديل سبب الغياب
-          if (!kid.isMissed)
-            Positioned(
-              top: MediaQuery.of(context).size.height * 0.01,
-              left: MediaQuery.of(context).size.width * 0.015,
-              child: Tooltip(
-                message: "تعديل سبب الغياب",
-                child: InkWell(
-                  onTap: onReasonEdit,
-                  child: Container(
-                    padding: EdgeInsets.all(
-                      MediaQuery.of(context).size.width * 0.015,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade100,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.orange.shade300,
-                        width: 1,
+          Positioned.directional(
+            textDirection: Directionality.of(context),
+            top: MediaQuery.of(context).size.height * 0.01,
+            start: MediaQuery.of(context).size.width * 0.015,
+            child: Tooltip(
+              message: 'edit_absence_reason'.tr(context),
+              child: InkWell(
+                onTap: onReasonEdit,
+                child: Container(
+                  padding: EdgeInsets.all(
+                    MediaQuery.of(context).size.width * 0.015,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.orange.shade300, width: 1),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        kid.absentReason.isEmpty ? Icons.add : Icons.edit,
+                        size: MediaQuery.of(context).size.width * 0.03,
+                        color: Colors.orange.shade800,
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          kid.absentReason.isEmpty ? Icons.add : Icons.edit,
-                          size: MediaQuery.of(context).size.width * 0.03,
-                          color: Colors.orange.shade800,
+                      if (kid.absentReason.isEmpty)
+                        SizedBox(
+                          width: MediaQuery.of(context).size.width * 0.005,
                         ),
-                        if (kid.absentReason.isEmpty)
-                          SizedBox(
-                            width: MediaQuery.of(context).size.width * 0.005,
-                          ),
-                        if (kid.absentReason.isEmpty)
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                              "سبب",
-                              style: TextStyle(
-                                fontSize:
-                                    MediaQuery.of(context).size.width * 0.025,
-                                color: Colors.orange.shade800,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                      if (kid.absentReason.isEmpty)
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            'reason'.tr(context),
+                            style: TextStyle(
+                              fontSize:
+                                  MediaQuery.of(context).size.width * 0.025,
+                              color: Colors.orange.shade800,
+                              fontWeight: FontWeight.bold,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
                 ),
               ),
             ),
+          ),
 
           if (kid.isMissed)
-            Positioned(
+            Positioned.directional(
+              textDirection: Directionality.of(context),
               bottom: 0,
-              right: 0,
+              end: 0,
               child: Container(
                 padding: EdgeInsets.symmetric(
                   horizontal: MediaQuery.of(context).size.width * 0.025,
@@ -812,9 +847,9 @@ class AbsentKidCard extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   color: Colors.green.shade700,
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(12),
-                    bottomLeft: Radius.circular(12),
+                  borderRadius: const BorderRadiusDirectional.only(
+                    topEnd: Radius.circular(12),
+                    bottomStart: Radius.circular(12),
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -835,7 +870,7 @@ class AbsentKidCard extends StatelessWidget {
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        "افتقده: ${kid.missedBy.contains('@') ? kid.missedBy.split('@')[0] : kid.missedBy}",
+                        "${'missed_by'.tr(context)}: ${kid.missedBy.contains('@') ? kid.missedBy.split('@')[0] : kid.missedBy}",
                         style: TextStyle(
                           fontSize: MediaQuery.of(context).size.width * 0.028,
                           color: Colors.white,
@@ -852,9 +887,10 @@ class AbsentKidCard extends StatelessWidget {
 
           // ✅ زر "افتقده" في الأسفل من الجهة اليمين
           if (!kid.isMissed)
-            Positioned(
+            Positioned.directional(
+              textDirection: Directionality.of(context),
               bottom: MediaQuery.of(context).size.height * 0.01,
-              right: MediaQuery.of(context).size.width * 0.025,
+              end: MediaQuery.of(context).size.width * 0.025,
               child: SizedBox(
                 width: MediaQuery.of(context).size.width * 0.23,
                 child: ElevatedButton(
@@ -900,12 +936,12 @@ class AbsencePage extends StatefulWidget {
 }
 
 class _AbsencePageState extends State<AbsencePage> {
-  String _selectedType = "مخدومين";
+  String _selectedType = "attendees";
 
   // Appwrite
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   RealtimeSubscription? _actionsSubscription;
   RealtimeSubscription? _userSubscription;
 
@@ -947,9 +983,42 @@ class _AbsencePageState extends State<AbsencePage> {
   }
 
   Future<void> _loadUserData() async {
+    // Immediate attempt to get cached name for better UI state
+    UserService().getCurrentUserName().then((name) {
+      if (mounted) setState(() => _currentServerName = name);
+    });
+
+    // 🚀 1. Cache First (Non-blocking)
+    final cachedUserId = await UserService().getCachedUserId();
+    if (cachedUserId != null) {
+      final cachedGroupData = await DataCacheService().getCachedUserGroupId(
+        cachedUserId,
+      );
+      if (cachedGroupData != null && cachedGroupData['groupId'] != null) {
+        if (mounted) {
+          setState(() {
+            _myGroupId = cachedGroupData['groupId']!;
+            _teamId = cachedGroupData['teamId'];
+          });
+        }
+
+        // Load data乐观地
+        if (_myGroupId.isNotEmpty) {
+          final canWrite = await PermissionService.canWrite(_myGroupId);
+          if (mounted) setState(() => _canWrite = canWrite);
+
+          // Fire these off without await to not block UI
+          _fetchAllKidsInfo();
+          _fetchGradeOrder();
+          _loadLatestReport();
+        }
+      }
+    }
+
+    // 🚀 2. Background Refresh
     try {
       final user = await _account.get();
-      _handleUserUpdate(user.$id); // Initial fetch
+      _handleUserUpdate(user.$id); // Live fetch
 
       _userSubscription = _realtime.subscribe([
         'databases.$databaseId.collections.$usersCollectionId.documents.${user.$id}',
@@ -957,11 +1026,15 @@ class _AbsencePageState extends State<AbsencePage> {
       _userSubscription!.stream.listen((event) {
         if (mounted) _handleUserUpdate(user.$id); // Refresh on update
       });
-
-      final name = await UserService().getCurrentUserName();
-      if (mounted) setState(() => _currentServerName = name);
     } catch (e) {
-      debugPrint("Error loading user: $e");
+      debugPrint("Error loading user from network: $e");
+      // If we completely failed network AND cache was empty earlier, show error
+      if (_myGroupId.isEmpty && mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'load_error'.tr(context);
+        });
+      }
     }
   }
 
@@ -976,11 +1049,22 @@ class _AbsencePageState extends State<AbsencePage> {
       if (mounted) {
         setState(() {
           _myGroupId = userDoc.data['groupId'] ?? '';
-          _currentServerName = userDoc.data['username'] ?? 'مستخدم';
+          _currentServerName = userDoc.data['username'] ?? 'user'.tr(context);
           _teamId = userDoc.data['teamId'];
         });
         final canWrite = await PermissionService.canWrite(_myGroupId);
         if (mounted) setState(() => _canWrite = canWrite);
+      }
+
+      // Cache User Group data for offline support
+      if (userId.isNotEmpty) {
+        final role = userDoc.data['role'] ?? 'user';
+        await DataCacheService().cacheUserGroupId(
+          userId,
+          _myGroupId,
+          _teamId,
+          role,
+        );
       }
 
       if (_myGroupId.isNotEmpty && prevGroupId != _myGroupId) {
@@ -989,7 +1073,14 @@ class _AbsencePageState extends State<AbsencePage> {
         _loadLatestReport();
       }
     } catch (e) {
-      debugPrint("Error fetching user doc: $e");
+      debugPrint("Error fetching user doc from network: $e");
+      // If we completely failed network AND cache was empty earlier, show error
+      if (_myGroupId.isEmpty && mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'load_error'.tr(context);
+        });
+      }
     }
   }
 
@@ -997,18 +1088,28 @@ class _AbsencePageState extends State<AbsencePage> {
     try {
       final grades = await GradeService(groupId: _myGroupId).getGrades();
       if (mounted) setState(() => _gradeOrder = grades);
+      // Cache grades for offline fallback
+      await DataCacheService().cacheGrades(_myGroupId, grades);
     } catch (e) {
       debugPrint("Error fetching grades: $e");
+      // Fallback to cache when offline
+      final cachedGrades = await DataCacheService().getCachedGrades(_myGroupId);
+      if (cachedGrades.isNotEmpty && mounted) {
+        setState(() => _gradeOrder = cachedGrades);
+      }
     }
   }
 
   Future<void> _fetchAllKidsInfo({bool forceRefresh = false}) async {
+    final requestType = _selectedType;
     if (_myGroupId.isEmpty) return;
     try {
-      final collectionId = (_selectedType == "خدام")
+      final collectionId = (_selectedType == "servants")
           ? servantsCollectionId
           : studentsCollectionId;
-      final typeForCache = (_selectedType == "خدام") ? 'servants' : 'students';
+      final typeForCache = (_selectedType == "servants")
+          ? 'servants'
+          : 'students';
 
       // 1. Try Loading from Cache
       if (!forceRefresh) {
@@ -1017,6 +1118,7 @@ class _AbsencePageState extends State<AbsencePage> {
           typeForCache,
         );
         if (cachedMap.isNotEmpty) {
+          if (requestType != _selectedType) return; // 🛡️ Guard
           if (mounted) {
             setState(() {
               _allKidsInfoMap = cachedMap.map(
@@ -1062,7 +1164,7 @@ class _AbsencePageState extends State<AbsencePage> {
       for (var doc in allDocs) {
         final info = KidInfo.fromAppwrite(
           doc,
-          _selectedType == "خدام" ? 'servants' : 'students',
+          (_selectedType == "servants") ? 'servants' : 'students',
         );
         tempMap[info.name] = info;
         jsonMapForCache[info.name] = info.toJson();
@@ -1075,6 +1177,7 @@ class _AbsencePageState extends State<AbsencePage> {
         jsonMapForCache,
       );
 
+      if (requestType != _selectedType) return; // 🛡️ Guard
       if (mounted) setState(() => _allKidsInfoMap = tempMap);
     } catch (e) {
       debugPrint("Error fetching kids info: $e");
@@ -1082,17 +1185,72 @@ class _AbsencePageState extends State<AbsencePage> {
   }
 
   Future<void> _loadLatestReport() async {
-    if (_myGroupId.isEmpty) {
-      return;
+    final requestType = _selectedType;
+    if (_myGroupId.isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _isLoading = _absentKids.isEmpty;
+        _errorMessage = '';
+      });
     }
-    setState(() {
-      _isLoading = true;
-      _errorMessage = '';
-    });
+
+    // 1. Load SIMPLE UI STATE Cache instantly
+    bool loadedFromState = false;
+    final cachedState = await DataCacheService().getCachedAbsenceState(
+      _myGroupId,
+      _selectedType,
+    );
+    if (cachedState.isNotEmpty && _absentKids.isEmpty) {
+      if (requestType != _selectedType) return; // 🛡️ Guard
+      if (mounted) {
+        setState(() {
+          _absentKids = cachedState.map((e) => AbsentKid.fromJson(e)).toList();
+          _isLoading = false;
+        });
+      }
+      loadedFromState = true;
+    }
+
+    // 2. Load cached report metadata (always, so we have reportName/date)
+    final cachedReport = await DataCacheService().getCachedAbsenceReport(
+      _myGroupId,
+      _selectedType,
+    );
+    if (cachedReport != null) {
+      try {
+        final cachedDoc = models.Document.fromMap(cachedReport);
+        if (requestType == _selectedType) {
+          if (mounted) setState(() => _latestReport = cachedDoc);
+
+          // If we didn't have a simple state cache, process this report data
+          if (!loadedFromState && _absentKids.isEmpty) {
+            await _processAbsenceData(
+              cachedDoc,
+              requestType,
+              isFromCache: true,
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint("Error reconstructing cached doc: $e");
+      }
+    }
+
+    // 3. Refresh kid info silently
+    if (_allKidsInfoMap.isEmpty) await _fetchAllKidsInfo();
 
     try {
-      // Refresh kid info if type changed
-      if (_allKidsInfoMap.isEmpty) await _fetchAllKidsInfo();
+      final isOnline = await SyncService().isOnline();
+      if (!isOnline) {
+        if (mounted && _absentKids.isEmpty) {
+          setState(() {
+            _errorMessage = 'no_internet'.tr(context);
+            _isLoading = false;
+          });
+        }
+        return;
+      }
 
       final result = await _databases.listDocuments(
         databaseId: databaseId,
@@ -1105,31 +1263,52 @@ class _AbsencePageState extends State<AbsencePage> {
         ],
       );
 
+      if (requestType != _selectedType) return; // 🛡️ Guard
+
       if (result.documents.isNotEmpty) {
         final reportDoc = result.documents.first;
-        if (mounted) {
-          setState(() {
-            _latestReport = reportDoc;
-          });
+
+        // 🚀 ONLY process if it's a NEW report or we have no data
+        if (reportDoc.$id != _latestReport?.$id || _absentKids.isEmpty) {
+          if (mounted) setState(() => _latestReport = reportDoc);
+
+          await DataCacheService().cacheAbsenceReport(
+            _myGroupId,
+            _selectedType,
+            reportDoc.toMap(),
+          );
+
+          if (requestType != _selectedType) return; // 🛡️ Guard
+          await _processAbsenceData(reportDoc, requestType);
+          _subscribeToActions(reportDoc.$id);
+        } else {
+          // Same report, just ensure we are subbed
+          _subscribeToActions(reportDoc.$id);
+          if (mounted) setState(() => _isLoading = false);
         }
-        await _processAbsenceData(reportDoc);
-        _subscribeToActions(reportDoc.$id);
       } else {
         if (mounted) {
           setState(() {
             _latestReport = null;
             _absentKids = [];
-            _errorMessage = "لا يوجد تقرير غياب حديث لـ $_selectedType.";
+            final localizedType = _selectedType.tr(context);
+            _errorMessage =
+                "${'no_recent_absence_report'.tr(context)} $localizedType.";
             _isLoading = false;
           });
         }
       }
     } catch (e) {
+      debugPrint("Error loading latest report: $e");
       if (mounted) {
-        setState(() {
-          _errorMessage = "خطأ في التحميل: $e";
-          _isLoading = false;
-        });
+        if (_absentKids.isEmpty && _latestReport == null) {
+          setState(() {
+            _errorMessage = "${'load_error'.tr(context)}: $e";
+            _isLoading = false;
+          });
+        } else {
+          setState(() => _isLoading = false);
+        }
       }
     }
   }
@@ -1139,22 +1318,72 @@ class _AbsencePageState extends State<AbsencePage> {
     await _loadLatestReport();
   }
 
-  Future<void> _processAbsenceData(models.Document reportDoc) async {
+  Future<void> _processAbsenceData(
+    models.Document reportDoc,
+    String requestType, {
+    bool isFromCache = false,
+  }) async {
+    final String reportId = reportDoc.$id;
     try {
-      final dataField = reportDoc.data['data'];
-      final Map<String, dynamic> rawMap = (dataField is String)
-          ? jsonDecode(dataField)
-          : (dataField ?? {});
+      Map<String, dynamic> rawMap = {};
+      final String? fileId = reportDoc.data['fileId'];
+
+      if (fileId != null && fileId.isNotEmpty) {
+        // Try getting from cache if it was already processed
+        if (!isFromCache) {
+          try {
+            // First check if network is available to avoid hanging
+            final isOnline = await SyncService()
+                .isOnline(); // Assuming this is available, if not, wait for timeout
+            if (!isOnline) throw Exception('Offline');
+
+            final res = await AppwriteService().storage.getFileDownload(
+              bucketId: AppwriteService.attendanceBucketId,
+              fileId: fileId,
+            );
+            final jsonString = utf8.decode(res);
+            rawMap = jsonDecode(jsonString);
+            // Cache the content for offline use
+            await DataCacheService().cacheReportContent(reportId, rawMap);
+          } catch (e) {
+            debugPrint('Error downloading report file: $e');
+            // Fallback to cache on download error
+            rawMap =
+                await DataCacheService().getCachedReportContent(reportId) ?? {};
+          }
+        } else {
+          // If we are loading from cache, try to get the full content first
+          rawMap =
+              await DataCacheService().getCachedReportContent(reportId) ??
+              reportDoc.data;
+        }
+      } else {
+        final dataField = reportDoc.data['data'];
+        if (dataField is String) {
+          rawMap = jsonDecode(dataField);
+        } else if (dataField is Map) {
+          rawMap = Map<String, dynamic>.from(dataField);
+        } else {
+          rawMap = {};
+        }
+      }
 
       final List<AbsentKid> baseAbsents = [];
       final String reportName = reportDoc.data['reportName'] ?? '';
-      final String reportId = reportDoc.$id;
 
       rawMap.forEach((grade, listDynamic) {
-        final list = listDynamic as List<dynamic>;
+        if (listDynamic is! List) return;
+
+        // 🚀 Ignore custom pages if we only want 'attendees' list
+        // Custom pages are saved as "GradeName - PageName"
+        if (requestType == 'attendees' && grade.contains(' - ')) {
+          return;
+        }
+
+        final list = listDynamic;
         for (var item in list) {
           if (item is Map && !(item['isPresent'] == true)) {
-            final String name = item['name'];
+            final String name = item['name'] ?? 'unknown_name'.tr(context);
             final String note = item['note'] ?? '';
             final String markedBy = item['markedBy'] ?? '';
 
@@ -1163,7 +1392,7 @@ class _AbsencePageState extends State<AbsencePage> {
             baseAbsents.add(
               AbsentKid(
                 name: name,
-                address: info?.address ?? 'غير متوفر',
+                address: info?.address ?? 'no_address'.tr(context),
                 grade: grade,
                 note: note,
                 recordedBy: markedBy,
@@ -1172,7 +1401,7 @@ class _AbsencePageState extends State<AbsencePage> {
                 phoneOwners: info?.phoneOwners ?? {},
                 locationUrl: info?.locationUrl,
                 reportId: reportId,
-                isMissed: false, // Default, will update from Actions
+                isMissed: false,
                 missedBy: '',
                 absentReason: '',
                 photoUrl: info?.photoUrl,
@@ -1182,25 +1411,63 @@ class _AbsencePageState extends State<AbsencePage> {
         }
       });
 
-      // Fetch Actions Overlay
-      final actionsResult = await _databases.listDocuments(
-        databaseId: databaseId,
-        collectionId: absenceActionsCollectionId,
-        queries: [
-          Query.equal('reportId', reportId),
-          Query.limit(1000), // Assumption: < 1000 absent kids contacted.
-        ],
-      );
+      // Fetch Actions from Cache first, then Network
+      List<Map<String, dynamic>> actionsList = await DataCacheService()
+          .getCachedAbsenceActions(reportId);
 
-      final Map<String, models.Document> actionsMap = {};
-      for (var doc in actionsResult.documents) {
-        actionsMap[doc.data['kidName']] = doc;
+      if (!isFromCache) {
+        try {
+          final isOnline = await SyncService().isOnline();
+          if (!isOnline) throw Exception('Offline');
+
+          final actionsResult = await _databases.listDocuments(
+            databaseId: databaseId,
+            collectionId: absenceActionsCollectionId,
+            queries: [Query.equal('reportId', reportId), Query.limit(1000)],
+          );
+          actionsList = actionsResult.documents.map((d) => d.data).toList();
+
+          // 🚀 CRITICAL: Replay pending offline edits on top of fresh network data!
+          // This prevents network fetches from overwriting offline edits before sync is complete.
+          final pendingOps = await DataCacheService().getPendingOperations();
+          for (var op in pendingOps) {
+            if (op['type'] == 'absence_action_upsert') {
+              final opData = op['data'] as Map<String, dynamic>;
+              if (opData['reportId'] == reportId) {
+                final String kidName = opData['kidName'];
+                final Map<String, dynamic> updates = opData['updates'] ?? {};
+                final int idx = actionsList.indexWhere(
+                  (a) => a['kidName'] == kidName,
+                );
+                if (idx != -1) {
+                  actionsList[idx] = {...actionsList[idx], ...updates};
+                } else {
+                  actionsList.add({
+                    'reportId': reportId,
+                    'kidName': kidName,
+                    'grade': opData['grade'],
+                    ...updates,
+                  });
+                }
+              }
+            }
+          }
+
+          await DataCacheService().cacheAbsenceActions(reportId, actionsList);
+        } catch (e) {
+          debugPrint("Error fetching actions from network: $e");
+        }
+      }
+
+      final Map<String, Map<String, dynamic>> actionsMap = {};
+      for (var action in actionsList) {
+        actionsMap[action['kidName']] = action;
       }
 
       // Merge
       final List<AbsentKid> mergedAbsents = baseAbsents.map((kid) {
         if (actionsMap.containsKey(kid.name)) {
-          final action = actionsMap[kid.name]!.data;
+          final action = actionsMap[kid.name]!;
           return kid.copyWith(
             isMissed: action['isMissed'] ?? false,
             missedBy: action['missedBy'] ?? '',
@@ -1210,28 +1477,47 @@ class _AbsencePageState extends State<AbsencePage> {
         return kid;
       }).toList();
 
-      // Sort
-      mergedAbsents.sort((a, b) {
-        final gradeCmp = _compareGrades(a.grade, b.grade);
-        if (gradeCmp != 0) return gradeCmp;
-        return a.name.compareTo(b.name);
-      });
+      // Sort safely
+      try {
+        mergedAbsents.sort((a, b) {
+          final gradeCmp = _compareGrades(a.grade, b.grade);
+          if (gradeCmp != 0) return gradeCmp;
+          return a.name.compareTo(b.name);
+        });
+      } catch (e) {
+        debugPrint("Sorting failed, ignoring: $e");
+      }
 
+      if (requestType != _selectedType) return; // 🛡️ Guard
       if (mounted) {
         setState(() {
           _absentKids = mergedAbsents;
           _isLoading = false;
         });
+        _saveAbsenceState(); // 🚀 Simplify Cache Call
       }
     } catch (e) {
       debugPrint("Error processing absence data: $e");
-      if (mounted) {
+      // Don't show error if we already loaded it successfully from cache once
+      if (mounted && _absentKids.isEmpty) {
         setState(() {
-          _errorMessage = "خطأ في معالجة البيانات";
+          _errorMessage = "${'data_processing_error'.tr(context)}: $e";
           _isLoading = false;
         });
+      } else if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
+  }
+
+  // Helper method to sync the UI list explicitly to cache
+  Future<void> _saveAbsenceState() async {
+    if (_myGroupId.isEmpty) return;
+    await DataCacheService().cacheAbsenceState(
+      _myGroupId,
+      _selectedType,
+      _absentKids.map((k) => k.toJson()).toList(),
+    );
   }
 
   int _compareGrades(String a, String b) {
@@ -1252,9 +1538,33 @@ class _AbsencePageState extends State<AbsencePage> {
     _actionsSubscription!.stream.listen((event) {
       final payload = event.payload;
       if (payload['reportId'] == reportId) {
-        // Inefficient to re-process all, but safe.
-        // Or update local list.
-        if (_latestReport != null) _processAbsenceData(_latestReport!);
+        final String kidName = payload['kidName'] ?? '';
+        final bool isMissed = payload['isMissed'] ?? false;
+        final String missedBy = payload['missedBy'] ?? '';
+        final String absentReason = payload['absentReason'] ?? '';
+
+        // Incremental Update to avoid ANR
+        if (mounted) {
+          setState(() {
+            final index = _absentKids.indexWhere((k) => k.name == kidName);
+            if (index != -1) {
+              _absentKids[index] = _absentKids[index].copyWith(
+                isMissed: isMissed,
+                missedBy: missedBy,
+                absentReason: absentReason,
+              );
+            }
+            // Call _saveAbsenceState() inside setState as per instruction
+            _saveAbsenceState(); // 🚀 Keep Cache in Sync
+          });
+
+          // Update action cache too
+          DataCacheService().updateSingleAbsenceActionInCache(
+            reportId,
+            kidName,
+            payload,
+          );
+        }
       }
     });
   }
@@ -1263,10 +1573,24 @@ class _AbsencePageState extends State<AbsencePage> {
     if (!_canWrite) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")),
+          SnackBar(content: Text('subscription_expired'.tr(context))),
         );
       }
       return;
+    }
+
+    // Optimistic Update (UI Refresh immediately)
+    if (mounted) {
+      setState(() {
+        final index = _absentKids.indexWhere((k) => k.name == kid.name);
+        if (index != -1) {
+          _absentKids[index] = _absentKids[index].copyWith(
+            isMissed: true,
+            missedBy: _currentServerName,
+          );
+        }
+        _saveAbsenceState(); // 🚀 Cache optimistic update
+      });
     }
 
     _upsertAction(kid.reportId, kid.name, kid.grade, {
@@ -1295,23 +1619,23 @@ class _AbsencePageState extends State<AbsencePage> {
           children: [
             Column(
               children: [
-                const Text(
-                  "افتقاد الغائبين",
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                Text(
+                  'miss_absentees'.tr(context),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 if (!_canWrite)
-                  const Text(
-                    "(وضع القراءة فقط)",
-                    style: TextStyle(fontSize: 10, color: Colors.white70),
+                  Text(
+                    'read_only_mode'.tr(context),
+                    style: const TextStyle(fontSize: 10, color: Colors.white70),
                   ),
               ],
             ),
             const SizedBox(height: 10),
             TextField(
               controller: reasonController,
-              decoration: const InputDecoration(
-                labelText: "سبب الغياب",
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: 'absence_reason'.tr(context),
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 20),
@@ -1320,13 +1644,30 @@ class _AbsencePageState extends State<AbsencePage> {
                 if (!_canWrite) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")),
+                      SnackBar(
+                        content: Text('subscription_expired'.tr(context)),
+                      ),
                     );
                   }
                   return;
                 }
+                final newReason = reasonController.text.trim();
+                if (context.mounted) {
+                  setState(() {
+                    final index = _absentKids.indexWhere(
+                      (k) => k.name == kid.name,
+                    );
+                    if (index != -1) {
+                      _absentKids[index] = _absentKids[index].copyWith(
+                        absentReason: newReason,
+                      );
+                    }
+                    _saveAbsenceState(); // 🚀 Cache Optimistic Update
+                  });
+                }
+
                 _upsertAction(kid.reportId, kid.name, kid.grade, {
-                  'absentReason': reasonController.text.trim(),
+                  'absentReason': newReason,
                   'reasonUpdatedBy': _currentServerName,
                   'reasonUpdatedAt': DateTime.now().toIso8601String(),
                 });
@@ -1334,7 +1675,7 @@ class _AbsencePageState extends State<AbsencePage> {
                   Navigator.pop(context);
                 }
               },
-              child: const Text("حفظ"),
+              child: Text('save'.tr(context)),
             ),
             const SizedBox(height: 20),
           ],
@@ -1349,8 +1690,15 @@ class _AbsencePageState extends State<AbsencePage> {
     String grade,
     Map<String, dynamic> updates,
   ) async {
-    // Check if action exists
+    // 2. Update Cache immediately
+    await DataCacheService().updateSingleAbsenceActionInCache(
+      reportId,
+      kidName,
+      updates,
+    );
+
     try {
+      // Check if action exists
       final result = await _databases.listDocuments(
         databaseId: databaseId,
         collectionId: absenceActionsCollectionId,
@@ -1389,14 +1737,20 @@ class _AbsencePageState extends State<AbsencePage> {
               : null,
         );
       }
-      // Logic to update local state immediately (optimistic) or wait for realtime
-      // Realtime will handle it.
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ: $e")));
-      }
+      debugPrint("Error upserting action: $e");
+      // If error (e.g. offline), add to pending operations
+      await DataCacheService().addPendingOperation({
+        'type': 'absence_action_upsert',
+        'data': {
+          'reportId': reportId,
+          'kidName': kidName,
+          'grade': grade,
+          'updates': updates,
+          'groupId': _myGroupId,
+          'teamId': _teamId,
+        },
+      });
     }
   }
 
@@ -1550,10 +1904,26 @@ class _AbsencePageState extends State<AbsencePage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildStatItem("الإجمالي", totalAbsent.toString(), Colors.blue),
-          _buildStatItem("الافتقاد", totalMissed.toString(), Colors.green),
-          _buildStatItem("متبقي", remaining.toString(), Colors.orange),
-          _buildStatItem("مع سبب", withReason.toString(), Colors.purple),
+          _buildStatItem(
+            'total'.tr(context),
+            totalAbsent.toString(),
+            Colors.blue,
+          ),
+          _buildStatItem(
+            'missed'.tr(context),
+            totalMissed.toString(),
+            Colors.green,
+          ),
+          _buildStatItem(
+            'remaining'.tr(context),
+            remaining.toString(),
+            Colors.orange,
+          ),
+          _buildStatItem(
+            'with_reason'.tr(context),
+            withReason.toString(),
+            Colors.purple,
+          ),
         ],
       ),
     );
@@ -1595,7 +1965,7 @@ class _AbsencePageState extends State<AbsencePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading || _currentServerName == "جاري التحميل...") {
+    if (_isLoading) {
       return Scaffold(
         backgroundColor: const Color(0xFFB71C1C),
         body: Center(
@@ -1607,9 +1977,10 @@ class _AbsencePageState extends State<AbsencePage> {
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
-                  _currentServerName == "جاري التحميل..."
-                      ? "جاري تحميل اسم الخادم والتقرير..."
-                      : "جاري تحميل أحدث تقرير...",
+                  _currentServerName == "جاري التحميل..." ||
+                          _currentServerName.isEmpty
+                      ? 'loading_server_and_report'.tr(context)
+                      : 'loading_latest_report'.tr(context),
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.8),
                     fontSize: MediaQuery.of(context).size.width * 0.04,
@@ -1642,20 +2013,69 @@ class _AbsencePageState extends State<AbsencePage> {
               backgroundColor: Colors.red.shade700,
               flexibleSpace: FlexibleSpaceBar(
                 centerTitle: true,
-                title: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    "سجل الغياب لـ $_selectedType",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: MediaQuery.of(context).size.width * 0.04,
-                      fontWeight: FontWeight.bold,
-                      shadows: const [
-                        Shadow(blurRadius: 10, color: Colors.black),
+                title: Container(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          "${'absence_register_for'.tr(context)} ${_selectedType.tr(context)}",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: MediaQuery.of(context).size.width * 0.038,
+                            fontWeight: FontWeight.bold,
+                            shadows: const [
+                              Shadow(blurRadius: 10, color: Colors.black),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (_latestReport != null) ...[
+                        const SizedBox(height: 2),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.assignment,
+                                size: 10,
+                                color: Colors.white70,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _latestReport!.data['reportName'] ?? '',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.normal,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              if (_latestReport!.data['date'] != null) ...[
+                                const Icon(
+                                  Icons.calendar_today,
+                                  size: 9,
+                                  color: Colors.white70,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  _latestReport!.data['date'],
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    ],
                   ),
                 ),
                 background: Container(
@@ -1686,7 +2106,7 @@ class _AbsencePageState extends State<AbsencePage> {
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Text(
-                            "❌ خطأ: $_errorMessage",
+                            "❌ ${'error_occurred'.tr(context).replaceFirst('%s', _errorMessage)}",
                             style: TextStyle(
                               color: Colors.red,
                               fontWeight: FontWeight.bold,
@@ -1718,16 +2138,19 @@ class _AbsencePageState extends State<AbsencePage> {
                           ),
                           child: ToggleButtons(
                             isSelected: [
-                              _selectedType == "مخدومين",
-                              _selectedType == "خدام",
+                              _selectedType == "attendees",
+                              _selectedType == "servants",
                             ],
                             onPressed: (int index) {
                               if (mounted) {
                                 setState(() {
                                   _selectedType = index == 0
-                                      ? "مخدومين"
-                                      : "خدام";
+                                      ? "attendees"
+                                      : "servants";
                                   _allKidsInfoMap.clear();
+                                  _absentKids.clear();
+                                  _latestReport = null;
+                                  _errorMessage = '';
                                   _isLoading = true;
                                 });
                                 _fetchAllKidsInfo().then((_) {
@@ -1746,8 +2169,8 @@ class _AbsencePageState extends State<AbsencePage> {
                                   MediaQuery.of(context).size.height * 0.05,
                             ),
                             children: [
-                              _buildToggleItem("المخدومين"),
-                              _buildToggleItem("الخدام"),
+                              _buildToggleItem('attendees'.tr(context)),
+                              _buildToggleItem('servants'.tr(context)),
                             ],
                           ),
                         ),
@@ -1758,7 +2181,7 @@ class _AbsencePageState extends State<AbsencePage> {
                     TextField(
                       onChanged: (v) => setState(() => _searchText = v),
                       decoration: InputDecoration(
-                        hintText: "بحث بالاسم في الغائبين...",
+                        hintText: 'search_in_absentees'.tr(context),
                         prefixIcon: Icon(
                           Icons.search,
                           color: Colors.red.shade700,
@@ -1819,8 +2242,8 @@ class _AbsencePageState extends State<AbsencePage> {
                           fit: BoxFit.scaleDown,
                           child: Text(
                             _latestReport != null
-                                ? "🎉 لا يوجد غياب مسجل لـ $_selectedType في هذا التقرير."
-                                : "⚠️ يرجى حفظ تقرير حضور أولاً لبدء الافتقاد.",
+                                ? "🎉 ${'no_absence_recorded_for'.tr(context)} ${_selectedType.tr(context)} ${'in_this_report'.tr(context)}"
+                                : "⚠️ ${'please_save_attendance_first'.tr(context)}",
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize:

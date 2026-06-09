@@ -1,0 +1,122 @@
+{
+    "en": {
+        "consecutive_absence_msg_1": "%s missed repeatedly, needs a check-in 📞",
+        "consecutive_absence_msg_2": "Reminder: %s hasn't attended lately, check on them today? ✨",
+        "consecutive_absence_msg_3": "Repeated absence of %s needs love and care, don't forget them 🙏",
+        "least_visited_msg_1": "%s needs you to ask about them today 💙",
+        "least_visited_msg_2": "Reminder: %s is one of the most in need of your care and visit right now ✨",
+        "least_visited_msg_3": "Don't forget to check on %s today, your labor of love is great 🙏",
+        "least_visited_msg_4": "Visiting %s today will have a great impact on their life 🌿",
+        "morning_reminder_title": "Morning Reminder ☀️",
+        "evening_reminder_title": "Evening Reminder ✨",
+        "evening_reminder_body": "Don't forget to check on %s today 💙"
+    },
+    "ar": {
+        "consecutive_absence_msg_1": "المخدوم %s غاب أكتر من مرة، محتاج سؤال ضروري منك 📞",
+        "consecutive_absence_msg_2": "تذكير: %s مش ظاهر بقاله فترة، ممكن تطمن عليه النهاردة؟ ✨",
+        "consecutive_absence_msg_3": "الغياب المتكرر لـ %s محتاج وقفة حب واحتواء، ماتنساش تكلمه 🙏",
+        "least_visited_msg_1": "المخدوم %s محتاج سؤالك عليه النهارده 💙",
+        "least_visited_msg_2": "تذكير: %s من أكتر المخدومين اللي محتاجين اهتمامك وزيارتك الفترة دي ✨",
+        "least_visited_msg_3": "ماتنساش تطمن على %s النهاردة، تعب محبتك كبير 🙏",
+        "least_visited_msg_4": "افتقاد %s النهاردة هيكون له أثر كبير في حياته 🌿",
+        "morning_reminder_title": "تذكير صباحي ☀️",
+        "evening_reminder_title": "تذكير مسائي ✨",
+        "evening_reminder_body": "ماتنساش تطمن على المخدوم %s النهاردة 💙"
+    },
+    "fr": {
+        "consecutive_absence_msg_1": "%s a manqué à plusieurs reprises, a besoin d'un suivi 📞",
+        "consecutive_absence_msg_2": "Rappel: %s n'est pas venu dernièrement, prenez de ses nouvelles aujourd'hui? ✨",
+        "consecutive_absence_msg_3": "L'absence répétée de %s nécessite amour et attention, ne l'oubliez pas 🙏",
+        "least_visited_msg_1": "%s a besoin que vous preniez de ses nouvelles aujourd'hui 💙",
+        "least_visited_msg_2": "Rappel: %s est parmi ceux qui ont le plus besoin de vos soins et de votre visite en ce moment ✨",
+        "least_visited_msg_3": "N'oubliez pas de prendre des nouvelles de %s aujourd'hui, votre travail d'amour est grand 🙏",
+        "least_visited_msg_4": "Rendre visite à %s aujourd'hui aura un grand impact sur sa vie 🌿",
+        "morning_reminder_title": "Rappel matinal ☀️",
+        "evening_reminder_title": "Rappel du soir ✨",
+        "evening_reminder_body": "N'oubliez pas de prendre des nouvelles de %s aujourd'hui 💙"
+    },
+    "es": {
+        "consecutive_absence_msg_1": "%s faltó repetidamente, necesita un seguimiento 📞",
+        "consecutive_absence_msg_2": "Recordatorio: %s no ha asistido últimamente, ¿puedes ver cómo le va hoy? ✨",
+        "consecutive_absence_msg_3": "La ausencia repetida de %s necesita amor y cuidado, no lo olvides 🙏",
+        "least_visited_msg_1": "%s necesita que preguntes por él/ella hoy 💙",
+        "least_visited_msg_2": "Recordatorio: %s es uno de los que más necesita tu cuidado y visita en este momento ✨",
+        "least_visited_msg_3": "No olvides ver cómo está %s hoy, tu labor de amor es grande 🙏",
+        "least_visited_msg_4": "Visitar a %s hoy tendrá un gran impacto en su vida 🌿",
+        "morning_reminder_title": "Recordatorio matutino ☀️",
+        "evening_reminder_title": "Recordatorio vespertino ✨",
+        "evening_reminder_body": "No olvides ver cómo está %s hoy 💙"
+    },
+    "de": {
+        "consecutive_absence_msg_1": "%s hat wiederholt gefehlt, braucht einen Check-in 📞",
+        "consecutive_absence_msg_2": "Erinnerung: %s war in letzter Zeit nicht da, heute nach ihm/ihr sehen? ✨",
+        "consecutive_absence_msg_3": "Wiederholte Abwesenheit von %s braucht Liebe und Fürsorge, vergiss sie nicht 🙏",
+        "least_visited_msg_1": "%s braucht dich, um heute nach ihm/ihr zu fragen 💙",
+        "least_visited_msg_2": "Erinnerung: %s gehört zu denen, die deine Fürsorge und deinen Besuch jetzt am meisten brauchen ✨",
+        "least_visited_msg_3": "Vergiss nicht, heute nach %s zu sehen, deine Liebesmühe ist groß 🙏",
+        "least_visited_msg_4": "Ein Besuch bei %s heute wird einen großen Einfluss auf sein/ihr Leben haben 🌿",
+        "morning_reminder_title": "Morgendliche Erinnerung ☀️",
+        "evening_reminder_title": "Abendliche Erinnerung ✨",
+        "evening_reminder_body": "Vergiss nicht, heute nach %s zu sehen 💙"
+    },
+    "it": {
+        "consecutive_absence_msg_1": "%s è stato assente ripetutamente, ha bisogno di un controllo 📞",
+        "consecutive_absence_msg_2": "Promemoria: %s non è venuto ultimamente, controllalo oggi? ✨",
+        "consecutive_absence_msg_3": "Le assenze ripetute di %s hanno bisogno di amore e cure, non dimenticarlo 🙏",
+        "least_visited_msg_1": "%s ha bisogno che tu chieda di lui/lei oggi 💙",
+        "least_visited_msg_2": "Promemoria: %s è uno dei più bisognosi delle tue cure e visite in questo momento ✨",
+        "least_visited_msg_3": "Non dimenticare di controllare %s oggi, la tua opera d'amore è grande 🙏",
+        "least_visited_msg_4": "Visitare %s oggi avrà un grande impatto sulla sua vita 🌿",
+        "morning_reminder_title": "Promemoria mattutino ☀️",
+        "evening_reminder_title": "Promemoria serale ✨",
+        "evening_reminder_body": "Non dimenticare di controllare %s oggi 💙"
+    },
+    "pt": {
+        "consecutive_absence_msg_1": "%s faltou repetidamente, precisa de um acompanhamento 📞",
+        "consecutive_absence_msg_2": "Lembrete: %s não tem comparecido ultimamente, verifique hoje? ✨",
+        "consecutive_absence_msg_3": "A ausência repetida de %s precisa de amor e cuidado, não se esqueça 🙏",
+        "least_visited_msg_1": "%s precisa que você pergunte por ele(a) hoje 💙",
+        "least_visited_msg_2": "Lembrete: %s é um dos que mais precisam do seu cuidado e visita agora ✨",
+        "least_visited_msg_3": "Não se esqueça de verificar %s hoje, seu trabalho de amor é grande 🙏",
+        "least_visited_msg_4": "Visitar %s hoje terá um grande impacto em sua vida 🌿",
+        "morning_reminder_title": "Lembrete matinal ☀️",
+        "evening_reminder_title": "Lembrete noturno ✨",
+        "evening_reminder_body": "Não se esqueça de verificar %s hoje 💙"
+    },
+    "nl": {
+        "consecutive_absence_msg_1": "%s was herhaaldelijk afwezig, heeft even aandacht nodig 📞",
+        "consecutive_absence_msg_2": "Herinnering: %s is er de laatste tijd niet, kijk vandaag even naar hem/haar om? ✨",
+        "consecutive_absence_msg_3": "Herhaaldelijke afwezigheid van %s heeft liefde en zorg nodig, vergeet ze niet 🙏",
+        "least_visited_msg_1": "%s heeft nodig dat je vandaag naar hem/haar vraagt 💙",
+        "least_visited_msg_2": "Herinnering: %s is een van degenen die op dit moment het meest jouw zorg en bezoek nodig heeft ✨",
+        "least_visited_msg_3": "Vergeet niet vandaag naar %s om te kijken, jouw liefdeswerk is groot 🙏",
+        "least_visited_msg_4": "Je bezoek aan %s vandaag zal een grote impact op zijn/haar leven hebben 🌿",
+        "morning_reminder_title": "Ochtendherinnering ☀️",
+        "evening_reminder_title": "Avondherinnering ✨",
+        "evening_reminder_body": "Vergeet niet vandaag naar %s om te kijken 💙"
+    },
+    "ru": {
+        "consecutive_absence_msg_1": "%s неоднократно отсутствовал(а), требуется проверка 📞",
+        "consecutive_absence_msg_2": "Напоминание: %s в последнее время не посещает, проверите его/ее сегодня? ✨",
+        "consecutive_absence_msg_3": "Повторное отсутствие %s требует любви и заботы, не забывайте о нем/ней 🙏",
+        "least_visited_msg_1": "%s нуждается в том, чтобы вы спросили о нем/ней сегодня 💙",
+        "least_visited_msg_2": "Напоминание: %s - один/одна из тех, кто больше всего нуждается в вашей заботе и посещении прямо сейчас ✨",
+        "least_visited_msg_3": "Не забудьте сегодня проведать %s, ваш труд любви велик 🙏",
+        "least_visited_msg_4": "Общение с %s сегодня окажет огромное влияние на его/ее жизнь 🌿",
+        "morning_reminder_title": "Утреннее напоминание ☀️",
+        "evening_reminder_title": "Вечернее напоминание ✨",
+        "evening_reminder_body": "Не забудьте сегодня проведать %s 💙"
+    },
+    "pl": {
+        "consecutive_absence_msg_1": "%s nie było z nami kilka razy, potrzebuje wsparcia 📞",
+        "consecutive_absence_msg_2": "Przypomnienie: %s nie był ostatnio obecny, sprawdzisz co u niego dzisiaj? ✨",
+        "consecutive_absence_msg_3": "Powtarzająca się nieobecność %s wymaga miłości i troski, nie zapomnij 🙏",
+        "least_visited_msg_1": "%s potrzebuje, abyś o niego dzisiaj zapytał 💙",
+        "least_visited_msg_2": "Przypomnienie: %s jest jedną z osób najbardziej potrzebujących Twojej troski i wizyty w tej chwili ✨",
+        "least_visited_msg_3": "Nie zapomnij sprawdzić co u %s dzisiaj, Twoja praca miłości jest wielka 🙏",
+        "least_visited_msg_4": "Wizyta u %s dzisiaj będzie miała wielki wpływ na jego/jej życie 🌿",
+        "morning_reminder_title": "Poranne przypomnienie ☀️",
+        "evening_reminder_title": "Wieczorne przypomnienie ✨",
+        "evening_reminder_body": "Nie zapomnij sprawdzić co u %s dzisiaj 💙"
+    }
+}

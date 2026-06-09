@@ -5,6 +5,7 @@ import '../services/grade_service.dart';
 import '../services/appwrite_service.dart';
 import '../services/data_cache_service.dart'; // 🚀 Added Cache
 import '../services/user_service.dart';
+import '../l10n/app_translations.dart';
 import 'attendance_page.dart';
 
 class AttendanceGradeSelectorPage extends StatefulWidget {
@@ -24,7 +25,7 @@ class _AttendanceGradeSelectorPageState
   String _myGroupId = '';
 
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   final Account _account = AppwriteService().account;
   RealtimeSubscription? _userSubscription;
   StreamSubscription<List<String>>? _gradesSubscription;
@@ -178,7 +179,9 @@ class _AttendanceGradeSelectorPageState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("اختيار المرحلة - ${widget.type}")),
+      appBar: AppBar(
+        title: Text('select_grade'.tr(context).replaceFirst('%s', widget.type)),
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -192,13 +195,15 @@ class _AttendanceGradeSelectorPageState
             child: _isLoadingRole || (_isLoadingGrades && _grades.isEmpty)
                 ? const CircularProgressIndicator()
                 : _grades.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                      "لا توجد فصول مضافة حالياً",
-                      style: TextStyle(fontSize: 18, color: Colors.white),
+                      'no_grades_added'.tr(context),
+                      style: const TextStyle(fontSize: 18, color: Colors.white),
                     ),
                   )
-                : ListView.builder(
+                : RefreshIndicator(
+                    onRefresh: _setupGradesStream,
+                    child: ListView.builder(
                     shrinkWrap: true,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
@@ -242,6 +247,7 @@ class _AttendanceGradeSelectorPageState
                         ),
                       );
                     },
+                  ),
                   ),
           ),
         ),

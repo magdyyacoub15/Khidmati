@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:appwrite/appwrite.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io';
 import '../services/appwrite_service.dart';
 import 'data_cache_service.dart';
 
@@ -11,8 +10,7 @@ class SubscriptionService {
   static const String databaseId = AppwriteService.databaseId;
   static const String groupsCollectionId = 'groups';
 
-  // Securely fetch server time (Approximated using local time for now as Appwrite has no direct server time API)
-  // In a stricter system, you'd use a Cloud Function to get time or trust the updatedAt of a fresh write.
+  // Securely fetch server time
   Future<DateTime?> getServerTime(String groupId) async {
     return _fetchRealTime();
   }
@@ -20,32 +18,93 @@ class SubscriptionService {
   // Caching variables
   SubscriptionStatus? _cachedStatus;
   DateTime? _lastCheckTime;
-  static const Duration _cacheDuration = Duration(minutes: 30);
+  static const Duration _cacheDuration = Duration(hours: 24);
 
-  // Check subscription status
   // Securely fetch network time
   Future<DateTime?> _fetchRealTime() async {
     try {
-      // 1. Try WorldTimeAPI
-      final response = await http.get(
-        Uri.parse('http://worldtimeapi.org/api/timezone/Etc/UTC'),
-      );
+      // 1. Try WorldTimeAPI (Use HTTPS for Web)
+      final response = await http
+          .get(Uri.parse('https://worldtimeapi.org/api/timezone/Etc/UTC'))
+          .timeout(const Duration(seconds: 5));
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return DateTime.parse(data['utc_datetime']).toLocal();
       }
     } catch (e) {
-      // Fallback or just continue
+      debugPrint("WorldTimeAPI fetch failed: $e");
     }
 
     try {
-      // 2. Fallback to Google Head (Date Header)
-      final response = await http.head(Uri.parse('https://www.google.com'));
-      if (response.headers['date'] != null) {
-        return HttpDate.parse(response.headers['date']!).toLocal();
+      // 2. Fallback to Google Head (Date Header) - Likely fails on Web due to CORS
+      final response = await http
+          .head(Uri.parse('https://www.google.com'))
+          .timeout(const Duration(seconds: 5));
+      final dateHeader = response.headers['date'];
+      if (dateHeader != null) {
+        final parsed = _parseHttpDate(dateHeader);
+        if (parsed != null) return parsed;
       }
     } catch (e) {
-      debugPrint("Network time fetch failed: $e");
+      debugPrint("Network time fetch (Google) failed: $e");
+    }
+
+    try {
+      // 3. Fallback to TimeApi.io (cors friendly)
+      final response = await http
+          .get(
+            Uri.parse('https://timeapi.io/api/Time/current/zone?timeZone=UTC'),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return DateTime.parse(data['dateTime']).toLocal();
+      }
+    } catch (e) {
+      debugPrint("TimeApi.io fetch failed: $e");
+    }
+
+    // 🚀 We no longer fallback to device time directly for Web.
+    // Device time can be manipulated by users (tampering).
+    // If all APIs fail, it returns null and triggers Offline mode logic with checks.
+    return null;
+  }
+
+  /// Manually parse HTTP Date header (Web Compatible alternative to HttpDate.parse)
+  DateTime? _parseHttpDate(String date) {
+    try {
+      final parts = date.split(' ');
+      if (parts.length >= 5) {
+        // "Tue, 15 Feb 2022 17:15:30 GMT"
+        final day = parts[1];
+        final monthStr = parts[2];
+        final year = parts[3];
+        final time = parts[4];
+
+        final months = {
+          'Jan': 1,
+          'Feb': 2,
+          'Mar': 3,
+          'Apr': 4,
+          'May': 5,
+          'Jun': 6,
+          'Jul': 7,
+          'Aug': 8,
+          'Sep': 9,
+          'Oct': 10,
+          'Nov': 11,
+          'Dec': 12,
+        };
+
+        final month = months[monthStr] ?? 1;
+        final isoString =
+            "$year-${month.toString().padLeft(2, '0')}-${day.padLeft(2, '0')}T${time}Z";
+        return DateTime.parse(isoString).toLocal();
+      }
+    } catch (e) {
+      debugPrint("Error manual parsing HTTP date: $e");
     }
     return null;
   }
@@ -54,31 +113,7 @@ class SubscriptionService {
     String groupId, {
     bool forceRefresh = false,
   }) async {
-    // 1. Check Connectivity First (Native dart:io check)
-    bool isOffline = false;
-    try {
-      final result = await InternetAddress.lookup('google.com');
-      if (result.isEmpty || result[0].rawAddress.isEmpty) {
-        isOffline = true;
-      }
-    } catch (_) {
-      isOffline = true;
-    }
-
-    if (isOffline) {
-      final cached = await DataCacheService().getCachedSubscriptionStatus(
-        groupId,
-      );
-      if (cached != null) {
-        final statusStr = cached['status'];
-        if (statusStr == 'active') return SubscriptionStatus.active;
-        if (statusStr == 'trial') return SubscriptionStatus.trial;
-        if (statusStr == 'expired') return SubscriptionStatus.expired;
-      }
-      return SubscriptionStatus.offline;
-    }
-
-    // 2. Return cached status if valid AND network time was verified recently
+    // 1. Return cached status if valid
     if (!forceRefresh &&
         _cachedStatus != null &&
         _lastCheckTime != null &&
@@ -87,16 +122,38 @@ class SubscriptionService {
     }
 
     try {
-      // 3. Get Real Time (NOT Local Device Time)
+      // 2. Get Real Time (Implicit Connectivity Check)
       final DateTime? networkNow = await _fetchRealTime();
+
       if (networkNow == null) {
-        // If we can't get real time, we can't verify subscription securely.
-        // Option: Block access or fallback to local if diff is small?
-        // User requested "Non-manipulatable", so we must validitate.
-        // Strict Mode: Return offline/error if time unknown.
+        // Fallback to cache if network time fails (Offline or CORS issue)
+        final cached = await DataCacheService().getCachedSubscriptionStatus(
+          groupId,
+        );
+        if (cached != null) {
+          final String statusStr = cached['status'];
+          final String? lastCheckStr = cached['lastCheck'];
+
+          // 🚀 Security Fix: 48-Hour Max Offline Limit
+          if (lastCheckStr != null) {
+            final DateTime lastCheckData = DateTime.parse(lastCheckStr);
+            if (DateTime.now().difference(lastCheckData) >
+                const Duration(hours: 48)) {
+              debugPrint(
+                "Offline grace period expired (48h exceeded). Defaulting to expired.",
+              );
+              return SubscriptionStatus.expired;
+            }
+          }
+
+          if (statusStr == 'active') return SubscriptionStatus.active;
+          if (statusStr == 'trial') return SubscriptionStatus.trial;
+          if (statusStr == 'expired') return SubscriptionStatus.expired;
+        }
         return SubscriptionStatus.offline;
       }
 
+      // 3. Fetch from Appwrite
       final doc = await _databases.getDocument(
         databaseId: databaseId,
         collectionId: groupsCollectionId,
@@ -123,8 +180,7 @@ class SubscriptionService {
       }
 
       _cachedStatus = status;
-      _lastCheckTime =
-          DateTime.now(); // Cache timestamp (local) is fine for short duration
+      _lastCheckTime = DateTime.now();
 
       // Update persistent cache
       await DataCacheService().cacheSubscriptionStatus(groupId, {
@@ -135,6 +191,27 @@ class SubscriptionService {
       return status;
     } catch (e) {
       debugPrint("Error checking subscription: $e");
+      // Fallback from cache on error
+      final cached = await DataCacheService().getCachedSubscriptionStatus(
+        groupId,
+      );
+      if (cached != null) {
+        final String statusStr = cached['status'];
+        final String? lastCheckStr = cached['lastCheck'];
+
+        // 🚀 Security Fix: 48-Hour Max Offline Limit (Error Path)
+        if (lastCheckStr != null) {
+          final DateTime lastCheckData = DateTime.parse(lastCheckStr);
+          if (DateTime.now().difference(lastCheckData) >
+              const Duration(hours: 48)) {
+            return SubscriptionStatus.expired;
+          }
+        }
+
+        if (statusStr == 'active') return SubscriptionStatus.active;
+        if (statusStr == 'trial') return SubscriptionStatus.trial;
+        if (statusStr == 'expired') return SubscriptionStatus.expired;
+      }
       return SubscriptionStatus.offline;
     }
   }
@@ -175,15 +252,14 @@ class SubscriptionService {
     bool isTrial = false,
   }) async {
     try {
-      // Fetch current to calculate new end date
+      final DateTime? networkNow = await _fetchRealTime();
+      if (networkNow == null) throw Exception("Network time unavailable");
+
       final doc = await _databases.getDocument(
         databaseId: databaseId,
         collectionId: groupsCollectionId,
         documentId: groupId,
       );
-
-      final DateTime? networkNow = await _fetchRealTime();
-      if (networkNow == null) throw Exception("Network time unavailable");
 
       DateTime currentEnd = networkNow;
       if (doc.data['subscriptionEndDate'] != null) {

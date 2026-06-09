@@ -5,13 +5,15 @@ import '../services/appwrite_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import 'dart:convert';
-import '../services/permission_service.dart';
+
 import '../services/data_cache_service.dart';
 
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import '../services/grade_service.dart';
+import '../l10n/app_translations.dart';
 
 class VisitedStatsPage extends StatefulWidget {
   const VisitedStatsPage({super.key});
@@ -23,7 +25,6 @@ class VisitedStatsPage extends StatefulWidget {
 class _VisitedStatsPageState extends State<VisitedStatsPage> {
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
   RealtimeSubscription? _userSubscription;
 
@@ -37,27 +38,14 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
   bool _isAdmin = false;
   bool _isLoading = true;
   List<models.Document> _reports = [];
-  bool _isFetchingMore = false;
-  bool _hasNextPage = true;
-  final int _pageSize = 20;
+  bool _isSyncing = false; // Flag to show background sync status
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _fetchUserData();
-    _scrollController.addListener(_onScroll);
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 200 &&
-        !_isFetchingMore &&
-        _hasNextPage &&
-        !_isLoading) {
-      _fetchReports(isLoadMore: true);
-    }
   }
 
   @override
@@ -112,10 +100,23 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
         }
       });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      debugPrint("Error loading user data in VisitedStatsPage: $e");
+      // 🚀 Fallback: Try to get last known group context if account.get fails (offline)
+      try {
+        final lastData = await DataCacheService().getCachedUserData();
+        if (lastData != null && lastData.containsKey('groupId')) {
+          if (mounted) {
+            setState(() {
+              _myGroupId = lastData['groupId'];
+              _isAdmin = lastData['role'] == 'admin';
+            });
+            _fetchReports();
+          }
+        } else {
+          if (mounted) setState(() => _isLoading = false);
+        }
+      } catch (cacheError) {
+        if (mounted) setState(() => _isLoading = false);
       }
     }
   }
@@ -132,72 +133,183 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
     }
   }
 
-  Future<void> _fetchReports({bool isLoadMore = false}) async {
-    if (isLoadMore) {
-      if (!_hasNextPage) return;
-      setState(() => _isFetchingMore = true);
-    } else {
-      // 1. Check Cache (Only for first page)
-      final cached = await DataCacheService().getCachedVisitedReports(
-        _myGroupId,
-      );
-      if (cached.isNotEmpty) {
-        if (mounted) {
-          setState(() {
-            _reports = cached.map((d) => models.Document.fromMap(d)).toList();
-            _isLoading = false;
-          });
-        }
-      } else {
-        if (mounted) setState(() => _isLoading = true);
+  // 🚀 Offline-First Full Sync Logic
+  Future<void> _fetchReports() async {
+    // 1. Instant Load From Cache (All available)
+    final cached = await DataCacheService().getCachedVisitedReports(_myGroupId);
+    if (cached.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _reports = cached.map((d) => models.Document.fromMap(d)).toList();
+          _isLoading = false; // Show instantly
+        });
       }
-      _hasNextPage = true;
+    } else {
+      if (mounted) setState(() => _isLoading = true);
     }
 
-    try {
-      final List<String> queries = [
-        Query.equal('groupId', _myGroupId),
-        Query.orderDesc('timestamp'),
-        Query.limit(_pageSize),
-      ];
+    // 2. Start Background Sync
+    _syncReportsBackground();
+  }
 
-      if (isLoadMore && _reports.isNotEmpty) {
-        queries.add(Query.cursorAfter(_reports.last.$id));
+  Future<void> _syncReportsBackground() async {
+    if (_isSyncing) return;
+    if (mounted) setState(() => _isSyncing = true);
+
+    try {
+      final List<models.Document> allDocuments = [];
+      String? lastDocId;
+      bool hasMore = true;
+      final int batchSize = 100;
+
+      while (hasMore) {
+        final List<String> queries = [
+          Query.equal('groupId', _myGroupId),
+          Query.orderDesc('timestamp'),
+          Query.limit(batchSize),
+        ];
+
+        if (lastDocId != null) {
+          queries.add(Query.cursorAfter(lastDocId));
+        }
+
+        final result = await _databases.listDocuments(
+          databaseId: databaseId,
+          collectionId: visitedReportsCollectionId,
+          queries: queries,
+        );
+
+        allDocuments.addAll(result.documents);
+
+        if (result.documents.length < batchSize) {
+          hasMore = false;
+        } else {
+          lastDocId = result.documents.last.$id;
+        }
       }
 
-      final result = await _databases.listDocuments(
-        databaseId: databaseId,
-        collectionId: visitedReportsCollectionId,
-        queries: queries,
+      // Update Cache and UI
+      if (mounted) {
+        final dataToCache = allDocuments.map((d) => d.toMap()).toList();
+        await DataCacheService().cacheVisitedReports(_myGroupId, dataToCache);
+
+        setState(() {
+          _reports = allDocuments;
+          _isLoading = false;
+        });
+      }
+
+      // 3. Initiate background sync for report details (for offline functionality)
+      _syncReportDetailsBackground(allDocuments);
+    } catch (e) {
+      debugPrint("Error syncing visitation reports: $e");
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
+    }
+  }
+
+  Future<void> _syncReportDetailsBackground(
+    List<models.Document> reports,
+  ) async {
+    for (var doc in reports) {
+      final cachedDetails = await DataCacheService().getCachedVisitedDetails(
+        doc.$id,
       );
 
-      if (mounted) {
-        setState(() {
-          if (isLoadMore) {
-            _reports.addAll(result.documents);
-            _isFetchingMore = false;
-          } else {
-            _reports = result.documents;
-            _isLoading = false;
-
-            // Cache only the first page
-            final dataToCache = result.documents.map((d) => d.toMap()).toList();
-            DataCacheService().cacheVisitedReports(_myGroupId, dataToCache);
-          }
-          _hasNextPage = result.documents.length == _pageSize;
-        });
+      // If we already have the details cached, skip
+      if (cachedDetails != null && cachedDetails.isNotEmpty) {
+        continue;
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isFetchingMore = false;
-        });
+
+      // Fetch and cache details silently
+      try {
+        final List<Map<String, dynamic>> gradesData = [];
+        final fileId = doc.data['fileId'] as String?;
+
+        if (fileId != null && fileId.isNotEmpty) {
+          // File-based details (New System)
+          final byteList = await AppwriteService().storage.getFileDownload(
+            bucketId: AppwriteService.attendanceBucketId,
+            fileId: fileId,
+          );
+
+          if (byteList.isNotEmpty) {
+            final jsonString = utf8.decode(byteList);
+            if (jsonString.trim().isNotEmpty) {
+              final Map<String, dynamic> fullReportData = jsonDecode(
+                jsonString,
+              );
+              fullReportData.forEach((grade, gradeData) {
+                final stats = gradeData["stats"] ?? {};
+                gradesData.add({
+                  "grade": grade,
+                  "total": stats["total"] ?? 0,
+                  "visitedCount": stats["visitedCount"] ?? 0,
+                  "percentage": (stats["percentage"] as num? ?? 0.0).toDouble(),
+                  "visitedList": (gradeData["visited"] as List)
+                      .map(
+                        (k) => k is String
+                            ? (jsonDecode(k) as Map? ?? {})
+                            : (k as Map? ?? {}),
+                      )
+                      .toList(),
+                  "unvisitedList": (gradeData["unvisited"] as List)
+                      .map(
+                        (k) => k is String
+                            ? (jsonDecode(k) as Map? ?? {})
+                            : (k as Map? ?? {}),
+                      )
+                      .toList(),
+                });
+              });
+            }
+          }
+        } else {
+          // Legacy details (Database)
+          final result = await _databases.listDocuments(
+            databaseId: databaseId,
+            collectionId: visitedReportsDetailsCollectionId,
+            queries: [Query.equal('reportId', doc.$id), Query.limit(10)],
+          );
+
+          for (var detailDoc in result.documents) {
+            final data = detailDoc.data;
+            gradesData.add({
+              "grade": data['grade'],
+              "total": data["total"] ?? 0,
+              "visitedCount": data["visitedCount"] ?? 0,
+              "percentage": (data["percentage"] ?? 0.0).toDouble(),
+              "visitedList": (data["visited"] as List? ?? [])
+                  .map(
+                    (k) => k is String
+                        ? (jsonDecode(k) as Map? ?? {})
+                        : (k as Map? ?? {}),
+                  )
+                  .toList(),
+              "unvisitedList": (data["unvisited"] as List? ?? [])
+                  .map(
+                    (k) => k is String
+                        ? (jsonDecode(k) as Map? ?? {})
+                        : (k as Map? ?? {}),
+                  )
+                  .toList(),
+            });
+          }
+        }
+
+        if (gradesData.isNotEmpty) {
+          await DataCacheService().cacheVisitedDetails(doc.$id, gradesData);
+        }
+
+        // Yield temporarily to prevent network flooding and UI freeze
+        await Future.delayed(const Duration(milliseconds: 500));
+      } catch (e) {
+        debugPrint("Error syncing detail for ${doc.$id}: $e");
       }
     }
   }
 
-  // 🔍 متغيرات الفلترة
+  // Filter variables
   DateTime? _selectedStartDate;
   DateTime? _selectedEndDate;
 
@@ -209,7 +321,7 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
           ? DateTime.parse(timestampStr)
           : null;
 
-      // فلترة حسب التاريخ
+      // Filter by date
       bool matchesDate = true;
       if (_selectedStartDate != null && timestamp != null) {
         matchesDate = matchesDate && timestamp.isAfter(_selectedStartDate!);
@@ -238,7 +350,7 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         if (isStartDate) {
           _selectedStartDate = picked;
@@ -283,7 +395,7 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
                           Expanded(
                             child: Text(
                               _selectedStartDate == null
-                                  ? "من التاريخ"
+                                  ? 'from_date'.tr(context)
                                   : DateFormat(
                                       'yyyy/MM/dd',
                                     ).format(_selectedStartDate!),
@@ -312,7 +424,7 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
                           Expanded(
                             child: Text(
                               _selectedEndDate == null
-                                  ? "إلى التاريخ"
+                                  ? 'to_date'.tr(context)
                                   : DateFormat(
                                       'yyyy/MM/dd',
                                     ).format(_selectedEndDate!),
@@ -332,7 +444,7 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.clear_all),
-                  label: const Text("مسح الفلترة"),
+                  label: Text('clear_filters'.tr(context)),
                   onPressed: _clearFilters,
                 ),
               ),
@@ -342,92 +454,26 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
     );
   }
 
-  Future<void> _confirmDeleteReport(String reportId, String reportName) async {
-    // 🔐 Security Check
-    final hasPermission = await PermissionService.canWrite(_myGroupId);
-    if (!hasPermission) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              "⚠️ الخدمة مجمدة مؤقتاً (راجع الاشتراك أو الإنترنت)",
-            ),
-            backgroundColor: Colors.red.shade900,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("حذف التقرير", textAlign: TextAlign.right),
-        content: Text(
-          "هل أنت متأكد من حذف تقرير '$reportName'؟ سيتم حذف جميع التفاصيل المرتبطة به.",
-          textAlign: TextAlign.right,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("إلغاء"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text("حذف"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        // 1. حذف التفاصيل المرتبطة
-        final details = await _databases.listDocuments(
-          databaseId: databaseId,
-          collectionId: visitedReportsDetailsCollectionId,
-          queries: [Query.equal('reportId', reportId)],
-        );
-
-        for (var doc in details.documents) {
-          await _databases.deleteDocument(
-            databaseId: databaseId,
-            collectionId: visitedReportsDetailsCollectionId,
-            documentId: doc.$id,
-          );
-        }
-
-        // 2. حذف التقرير الرئيسي
-        await _databases.deleteDocument(
-          databaseId: databaseId,
-          collectionId: visitedReportsCollectionId,
-          documentId: reportId,
-        );
-
-        setState(() {}); // refresh list
-        if (mounted) {
-          _fetchReports(); // refresh list
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("✅ تم حذف التقرير بنجاح")),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text("❌ فشل في الحذف: $e")));
-        }
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("📋 سجل الافتقاد الموحد")),
+      appBar: AppBar(
+        title: Text('unified_visitation_log'.tr(context)),
+        actions: [
+          if (_isSyncing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16.0),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+            ),
+        ],
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -443,10 +489,10 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
                   child: CircularProgressIndicator(color: Colors.white),
                 )
               : _myGroupId.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    "⚠️ خطأ: لم يتم العثور على رمز المجموعة.",
-                    style: TextStyle(color: Colors.white, fontSize: 16),
+                    'no_group_id_error'.tr(context),
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
                   ),
                 )
               : _buildReportsList(),
@@ -457,20 +503,20 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
 
   Widget _buildReportsList() {
     if (_reports.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
-          "⚠️ لا توجد سجلات افتقاد موحدة متاحة.",
-          style: TextStyle(color: Colors.white, fontSize: 16),
+          'no_unified_records'.tr(context),
+          style: const TextStyle(color: Colors.white, fontSize: 16),
         ),
       );
     }
     final filteredReports = _filterReports(_reports);
 
     if (filteredReports.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
-          "⚠️ لا توجد نتائج تطابق الفلترة",
-          style: TextStyle(color: Colors.white, fontSize: 16),
+          'no_filter_results'.tr(context),
+          style: const TextStyle(color: Colors.white, fontSize: 16),
         ),
       );
     }
@@ -479,27 +525,131 @@ class _VisitedStatsPageState extends State<VisitedStatsPage> {
       children: [
         _buildFilterSection(),
         Expanded(
-          child: ListView.builder(
+          child: RefreshIndicator(
+            onRefresh: _fetchReports,
+            child: ListView.builder(
             controller: _scrollController,
-            itemCount: filteredReports.length + (_hasNextPage ? 1 : 0),
+            itemCount: filteredReports.length,
             itemBuilder: (context, index) {
-              if (index == filteredReports.length) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: CircularProgressIndicator(color: Colors.white),
+              return Dismissible(
+                key: Key(filteredReports[index].$id),
+                direction: DismissDirection.endToStart,
+                confirmDismiss: (direction) async {
+                  if (!_isAdmin) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text("⚠️ ليس لديك صلاحية الحذف"),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return false;
+                  }
+                  final data = filteredReports[index].data;
+                  final nestedData = data['data'] as Map<String, dynamic>?;
+                  final reportName =
+                      data["reportName"] ?? nestedData?["reportName"] ?? "";
+
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Text(
+                        'delete_report_title'.tr(context),
+                        textAlign: TextAlign.right,
+                      ),
+                      content: Text(
+                        'delete_report_message'
+                            .tr(context)
+                            .replaceFirst('%s', reportName),
+                        textAlign: TextAlign.right,
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: Text('cancel'.tr(context)),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                          ),
+                          child: Text('delete'.tr(context)),
+                        ),
+                      ],
+                    ),
+                  );
+                  return confirmed == true;
+                },
+                onDismissed: (direction) async {
+                  try {
+                    final reportId = filteredReports[index].$id;
+                    // 1. حذف التفاصيل المرتبطة
+                    final details = await _databases.listDocuments(
+                      databaseId: databaseId,
+                      collectionId: visitedReportsDetailsCollectionId,
+                      queries: [Query.equal('reportId', reportId)],
+                    );
+
+                    for (var doc in details.documents) {
+                      await _databases.deleteDocument(
+                        databaseId: databaseId,
+                        collectionId: visitedReportsDetailsCollectionId,
+                        documentId: doc.$id,
+                      );
+                    }
+
+                    // 2. حذف التقرير الرئيسي
+                    await _databases.deleteDocument(
+                      databaseId: databaseId,
+                      collectionId: visitedReportsCollectionId,
+                      documentId: reportId,
+                    );
+
+                    setState(() {}); // refresh list
+                    if (context.mounted) {
+                      _fetchReports(); // refresh list
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('report_deleted_success'.tr(context)),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'report_delete_failed'
+                                .tr(context)
+                                .replaceFirst('%s', e.toString()),
+                          ),
+                        ),
+                      );
+                      _fetchReports(); // refresh list on error
+                    }
+                  }
+                },
+                background: Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                );
-              }
-              return VisitedReportCard(
-                doc: filteredReports[index],
-                isAdmin: _isAdmin,
-                onDelete: () => _confirmDeleteReport(
-                  filteredReports[index].$id,
-                  filteredReports[index].data["reportName"] ?? "",
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: const Icon(
+                    Icons.delete,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+                child: VisitedReportCard(
+                  doc: filteredReports[index],
+                  isAdmin: _isAdmin,
+                  onDelete: () {}, // Handled by dismissible now
                 ),
               );
             },
+          ),
           ),
         ),
       ],
@@ -575,41 +725,135 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
         return;
       }
 
-      // 2. Fetch
       final List<Map<String, dynamic>> gradesData = [];
-      final result = await _databases.listDocuments(
-        databaseId: databaseId,
-        collectionId: visitedReportsDetailsCollectionId,
-        queries: [Query.equal('reportId', widget.doc.$id), Query.limit(10)],
-      );
 
-      for (var doc in result.documents) {
-        final data = doc.data;
-        final visitedList = (data["visited"] as List? ?? [])
-            .map((k) => (k is String) ? jsonDecode(k) : k)
-            .toList()
-            .cast<Map<String, dynamic>>();
+      // 2. Check for fileId (New System)
+      final actualData = widget.doc.data['data'] is Map<String, dynamic>
+          ? widget.doc.data['data']
+          : widget.doc.data;
+      final fileId = actualData['fileId'] as String?;
 
-        final unvisitedList = (data["unvisited"] as List? ?? [])
-            .map((k) => (k is String) ? jsonDecode(k) : k)
-            .toList()
-            .cast<Map<String, dynamic>>();
+      if (fileId != null && fileId.isNotEmpty) {
+        try {
+          final byteList = await AppwriteService().storage.getFileDownload(
+            bucketId: AppwriteService.attendanceBucketId,
+            fileId: fileId,
+          );
 
-        gradesData.add({
-          "grade": doc.data['grade'],
-          "total": data["total"] ?? 0,
-          "visitedCount": data["visitedCount"] ?? 0,
-          "percentage": (data["percentage"] ?? 0.0).toDouble(),
-          "visitedList": visitedList,
-          "unvisitedList": unvisitedList,
-        });
+          if (byteList.isNotEmpty) {
+            final jsonString = utf8.decode(byteList);
+            if (jsonString.trim().isNotEmpty) {
+              final Map<String, dynamic> fullReportData = jsonDecode(
+                jsonString,
+              );
+
+              // Convert Map to List structure
+              fullReportData.forEach((grade, gradeData) {
+                final stats = gradeData["stats"] ?? {};
+
+                final visitedList = (gradeData["visited"] as List)
+                    .map((k) {
+                      if (k is String) {
+                        try {
+                          return jsonDecode(k);
+                        } catch (_) {
+                          return {};
+                        }
+                      }
+                      return k;
+                    })
+                    .toList()
+                    .cast<Map<String, dynamic>>();
+
+                final unvisitedList = (gradeData["unvisited"] as List)
+                    .map((k) {
+                      if (k is String) {
+                        try {
+                          return jsonDecode(k);
+                        } catch (_) {
+                          return {};
+                        }
+                      }
+                      return k;
+                    })
+                    .toList()
+                    .cast<Map<String, dynamic>>();
+
+                gradesData.add({
+                  "grade": grade,
+                  "total": stats["total"] ?? 0,
+                  "visitedCount": stats["visitedCount"] ?? 0,
+                  "percentage": (stats["percentage"] as num? ?? 0.0).toDouble(),
+                  "visitedList": visitedList,
+                  "unvisitedList": unvisitedList,
+                });
+              });
+            }
+          }
+        } catch (e) {
+          debugPrint("Error fetching file details: $e");
+          // Fallback or rethrow? Let's just log and maybe fallback if empty
+        }
+      }
+
+      // 3. Fallback to Legacy System (if fileId missing or failed/empty)
+      if (gradesData.isEmpty) {
+        final result = await _databases.listDocuments(
+          databaseId: databaseId,
+          collectionId: visitedReportsDetailsCollectionId,
+          queries: [Query.equal('reportId', widget.doc.$id), Query.limit(10)],
+        );
+
+        for (var doc in result.documents) {
+          final data = doc.data;
+
+          final visitedList = (data["visited"] as List? ?? [])
+              .map((k) {
+                if (k is String) {
+                  if (k.trim().isEmpty) return {};
+                  try {
+                    return jsonDecode(k);
+                  } catch (_) {
+                    return {};
+                  }
+                }
+                return k;
+              })
+              .toList()
+              .cast<Map<String, dynamic>>();
+
+          final unvisitedList = (data["unvisited"] as List? ?? [])
+              .map((k) {
+                if (k is String) {
+                  if (k.trim().isEmpty) return {};
+                  try {
+                    return jsonDecode(k);
+                  } catch (_) {
+                    return {};
+                  }
+                }
+                return k;
+              })
+              .toList()
+              .cast<Map<String, dynamic>>();
+
+          gradesData.add({
+            "grade": doc.data['grade'],
+            "total": data["total"] ?? 0,
+            "visitedCount": data["visitedCount"] ?? 0,
+            "percentage": (data["percentage"] ?? 0.0).toDouble(),
+            "visitedList": visitedList,
+            "unvisitedList": unvisitedList,
+          });
+        }
       }
 
       // Sort
+      if (!mounted) return;
       final Map<String, int> gradeOrder = {
-        "سنة أولى": 1,
-        "سنة تانية": 2,
-        "سنة تالتة": 3,
+        'grade_1_name'.tr(context): 1,
+        'grade_2_name'.tr(context): 2,
+        'grade_3_name'.tr(context): 3,
       };
       gradesData.sort((a, b) {
         final orderA = gradeOrder[a["grade"]] ?? 99;
@@ -618,7 +862,12 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
       });
 
       // Update Cache
-      await DataCacheService().cacheVisitedDetails(widget.doc.$id, gradesData);
+      if (gradesData.isNotEmpty) {
+        await DataCacheService().cacheVisitedDetails(
+          widget.doc.$id,
+          gradesData,
+        );
+      }
 
       if (mounted) {
         setState(() {
@@ -661,14 +910,18 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
                   itemCount: list.length,
                   itemBuilder: (context, index) {
                     final kid = list[index];
-                    final name = kid["name"] ?? "اسم غير معروف";
-                    final address = kid["address"] ?? "عنوان غير معروف";
+                    final name = kid["name"] ?? 'unknown_name'.tr(context);
+                    final address =
+                        kid["address"] ?? 'unknown_address'.tr(context);
                     final phones = List<String>.from(kid["phones"] ?? []);
-                    final String visitedBy = kid["visitedBy"] ?? "غير محدد";
+                    final String visitedBy =
+                        kid["visitedBy"] ?? 'not_specified'.tr(context);
 
                     final String statusText = isVisitedList
-                        ? "✅ تم الافتقاد بواسطة: $visitedBy"
-                        : "❌ لم يتم الافتقاد";
+                        ? 'visited_by_status'
+                              .tr(context)
+                              .replaceFirst('%s', visitedBy)
+                        : 'not_visited_status_text'.tr(context);
 
                     return Card(
                       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -733,7 +986,10 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          "🔥 الإجمالي الكلي للافتقاد: $visited من $total",
+          'overall_visitation_total'
+              .tr(context)
+              .replaceFirst('%s', visited.toString())
+              .replaceFirst('%s', total.toString()),
           style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w900,
@@ -759,7 +1015,9 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
             Positioned.fill(
               child: Center(
                 child: Text(
-                  "$percentageText%", // عرض النسبة المئوية
+                  'overall_visitation_percentage'
+                      .tr(context)
+                      .replaceFirst('%s', percentageText), // عرض النسبة المئوية
                   style: TextStyle(
                     color: Colors.black.withValues(alpha: 0.8),
                     fontWeight: FontWeight.bold,
@@ -777,12 +1035,22 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
   @override
   Widget build(BuildContext context) {
     final data = widget.doc.data;
-    final weekName = data["reportName"] ?? widget.doc.$id;
-    final totalOverall = data["totalOverall"] ?? 0;
-    final visitedOverall = data["visitedOverall"] ?? 0;
+
+    // When loaded from SharedPreferences cache, Appwrite's fromMap might nest the data
+    final dynamic rawDataField = data['data'];
+    final Map<String, dynamic>? nestedData =
+        (rawDataField is Map<String, dynamic>) ? rawDataField : null;
+
+    final weekName =
+        data["reportName"] ?? nestedData?["reportName"] ?? widget.doc.$id;
+    final totalOverall =
+        data["totalOverall"] ?? nestedData?["totalOverall"] ?? 0;
+    final visitedOverall =
+        data["visitedOverall"] ?? nestedData?["visitedOverall"] ?? 0;
+    final rawPercentage =
+        data["overallPercentage"] ?? nestedData?["overallPercentage"];
     final percentageOverall =
-        (data["overallPercentage"] as num?)?.toDouble().toStringAsFixed(1) ??
-        "0.0";
+        (rawPercentage as num?)?.toDouble().toStringAsFixed(1) ?? "0.0";
 
     return GestureDetector(
       onLongPress: widget.isAdmin ? widget.onDelete : null,
@@ -802,7 +1070,10 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
           ),
           trailing: IconButton(
             icon: const Icon(Icons.picture_as_pdf, color: Colors.blueAccent),
-            onPressed: () => _printVisitReport(widget.doc),
+            onPressed: () {
+              if (!mounted) return;
+              _printVisitReport(context, widget.doc);
+            },
           ),
           onExpansionChanged: (expanded) {
             if (expanded && _details.isEmpty) {
@@ -825,9 +1096,9 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (_details.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(20.0),
-                child: Text("لا توجد تفاصيل متاحة"),
+              Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Text('no_details_available'.tr(context)),
               )
             else
               ..._details.map((gradeData) {
@@ -844,7 +1115,12 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
 
                 return ExpansionTile(
                   title: Text(
-                    "🔹 $grade - افتقاد: $visitedCount من $totalInGrade (${percentage.toStringAsFixed(1)}%)",
+                    'grade_visitation_stats'
+                        .tr(context)
+                        .replaceFirst('%s', grade)
+                        .replaceFirst('%s', visitedCount.toString())
+                        .replaceFirst('%s', totalInGrade.toString())
+                        .replaceFirst('%s', percentage.toStringAsFixed(1)),
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
@@ -853,24 +1129,28 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
                   children: [
                     ListTile(
                       title: Text(
-                        "✅ تم افتقاده ($visitedCount) - اضغط للتفاصيل",
+                        'visited_count_details'
+                            .tr(context)
+                            .replaceFirst('%s', visitedCount.toString()),
                       ),
                       tileColor: Colors.green.shade100,
                       onTap: () => _showDetails(
                         context,
-                        "تم افتقاد - $grade",
+                        'visited_grade'.tr(context).replaceFirst('%s', grade),
                         visitedList,
                         true,
                       ),
                     ),
                     ListTile(
                       title: Text(
-                        "❌ لم يتم افتقاد ($unvisitedCount) - اضغط للتفاصيل",
+                        'unvisited_count_details'
+                            .tr(context)
+                            .replaceFirst('%s', unvisitedCount.toString()),
                       ),
                       tileColor: Colors.red.shade100,
                       onTap: () => _showDetails(
                         context,
-                        "لم يتم افتقاد - $grade",
+                        'unvisited_grade'.tr(context).replaceFirst('%s', grade),
                         unvisitedList,
                         false,
                       ),
@@ -884,115 +1164,661 @@ class _VisitedReportCardState extends State<VisitedReportCard> {
     );
   }
 
-  Future<void> _printVisitReport(models.Document reportDoc) async {
+  Future<void> _printVisitReport(
+    BuildContext flutterContext,
+    models.Document reportDoc,
+  ) async {
     try {
       final pdf = pw.Document();
-      final fontData = await rootBundle.load("assets/fonts/Alfares.ttf");
-      final ttf = pw.Font.ttf(fontData);
 
-      final detailsResult = await _databases.listDocuments(
-        databaseId: databaseId,
-        collectionId: visitedReportsDetailsCollectionId,
-        queries: [Query.equal('reportId', reportDoc.$id), Query.limit(100)],
-      );
+      // Load a highly stable font for Arabic (Local Offline Font)
+      pw.Font ttf;
+      try {
+        final fontData = await rootBundle.load("assets/fonts/Alfares.ttf");
+        ttf = pw.Font.ttf(fontData);
+      } catch (e) {
+        debugPrint(
+          "Critical Error: Local font Alfares.ttf could not be loaded: $e",
+        );
+        rethrow;
+      }
 
-      final reportName = reportDoc.data['reportName'] ?? "تقرير افتقاد";
+      // Skip Emoji font completely to ensure offline stability
+
+      final reportName =
+          reportDoc.data['reportName'] ??
+          (flutterContext.mounted
+              ? 'visitation_stats_report'.tr(flutterContext)
+              : 'Report');
       final timestamp = reportDoc.data['timestamp'] ?? "";
+
+      // Fetch Data (Cache First -> File -> Legacy)
+      List<Map<String, dynamic>> gradesData = [];
+      bool success = false;
+
+      // 1. Check Cache First (Crucial for Offline PDF)
+      final cachedDetails = await DataCacheService().getCachedVisitedDetails(
+        reportDoc.$id,
+      );
+      if (cachedDetails != null && cachedDetails.isNotEmpty) {
+        gradesData = List<Map<String, dynamic>>.from(cachedDetails);
+        success = true;
+      }
+
+      final actualData = reportDoc.data['data'] is Map<String, dynamic>
+          ? reportDoc.data['data']
+          : reportDoc.data;
+      final fileId = actualData['fileId'] as String?;
+
+      if (!success && fileId != null && fileId.isNotEmpty) {
+        // 2. File Logic (If not cached)
+        try {
+          final byteList = await AppwriteService().storage.getFileDownload(
+            bucketId: AppwriteService.attendanceBucketId,
+            fileId: fileId,
+          );
+
+          if (byteList.isNotEmpty) {
+            final jsonString = utf8.decode(byteList);
+            if (jsonString.trim().isNotEmpty) {
+              final Map<String, dynamic> fullReportData = jsonDecode(
+                jsonString,
+              );
+
+              fullReportData.forEach((grade, gradeData) {
+                final visitedList = (gradeData["visited"] as List)
+                    .map((k) {
+                      if (k is String) {
+                        try {
+                          return jsonDecode(k);
+                        } catch (_) {
+                          return {};
+                        }
+                      }
+                      return k;
+                    })
+                    .toList()
+                    .cast<Map<String, dynamic>>();
+
+                final unvisitedList = (gradeData["unvisited"] as List)
+                    .map((k) {
+                      if (k is String) {
+                        try {
+                          return jsonDecode(k);
+                        } catch (_) {
+                          return {};
+                        }
+                      }
+                      return k;
+                    })
+                    .toList()
+                    .cast<Map<String, dynamic>>();
+
+                gradesData.add({
+                  "grade": grade,
+                  "visitedList": visitedList,
+                  "unvisitedList": unvisitedList,
+                });
+              });
+              success = true;
+
+              // Update Cache for future offline use
+              await DataCacheService().cacheVisitedDetails(
+                reportDoc.$id,
+                gradesData,
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint("Error downloading PDF source file: $e");
+        }
+      }
+
+      if (!success) {
+        // 3. Legacy Logic (If not cached and no file/failed file)
+        try {
+          final detailsResult = await _databases.listDocuments(
+            databaseId: databaseId,
+            collectionId: visitedReportsDetailsCollectionId,
+            queries: [Query.equal('reportId', reportDoc.$id), Query.limit(100)],
+          );
+
+          for (var detailDoc in detailsResult.documents) {
+            final visitedList = (detailDoc.data['visited'] as List? ?? [])
+                .map((k) {
+                  if (k is String) {
+                    if (k.trim().isEmpty) return {};
+                    try {
+                      return jsonDecode(k);
+                    } catch (_) {
+                      return {};
+                    }
+                  }
+                  return k;
+                })
+                .toList()
+                .cast<Map<String, dynamic>>();
+
+            final unvisitedList = (detailDoc.data['unvisited'] as List? ?? [])
+                .map((k) {
+                  if (k is String) {
+                    if (k.trim().isEmpty) return {};
+                    try {
+                      return jsonDecode(k);
+                    } catch (_) {
+                      return {};
+                    }
+                  }
+                  return k;
+                })
+                .toList()
+                .cast<Map<String, dynamic>>();
+
+            gradesData.add({
+              "grade": detailDoc.data['grade'],
+              "visitedList": visitedList,
+              "unvisitedList": unvisitedList,
+            });
+          }
+          if (gradesData.isNotEmpty) {
+            await DataCacheService().cacheVisitedDetails(
+              reportDoc.$id,
+              gradesData,
+            );
+          }
+        } catch (e) {
+          debugPrint("Error fetching legacy details for PDF: $e");
+        }
+      }
+
+      // Fetch dynamic grade order
+      List<String> dynamicGradeOrder = [];
+      try {
+        final groupId = reportDoc.data['groupId'] as String?;
+        if (groupId != null) {
+          dynamicGradeOrder = await GradeService(groupId: groupId).getGrades();
+        }
+      } catch (_) {}
+
+      // Sort for PDF
+      if (!flutterContext.mounted) return;
+      gradesData.sort((a, b) {
+        if (dynamicGradeOrder.isNotEmpty) {
+          final indexA = dynamicGradeOrder.indexOf(a["grade"]);
+          final indexB = dynamicGradeOrder.indexOf(b["grade"]);
+          final safeIndexA = indexA == -1 ? 999 : indexA;
+          final safeIndexB = indexB == -1 ? 999 : indexB;
+          return safeIndexA.compareTo(safeIndexB);
+        } else {
+          // Fallback
+          final Map<String, int> fallbackOrder = {
+            'grade_1_name'.tr(flutterContext): 1,
+            'grade_2_name'.tr(flutterContext): 2,
+            'grade_3_name'.tr(flutterContext): 3,
+          };
+          final orderA = fallbackOrder[a["grade"]] ?? 99;
+          final orderB = fallbackOrder[b["grade"]] ?? 99;
+          return orderA.compareTo(orderB);
+        }
+      });
+
+      if (gradesData.isEmpty) {
+        if (flutterContext.mounted) {
+          throw 'printing_no_data'.tr(flutterContext);
+        }
+        throw 'No data available for printing';
+      }
 
       pdf.addPage(
         pw.MultiPage(
-          theme: pw.ThemeData.withFont(base: ttf),
+          pageFormat: PdfPageFormat.a4.landscape, // 🚀 Landscape
+          theme: pw.ThemeData.withFont(
+            base: ttf,
+            fontFallback: [], // No emoji fallback needed
+          ),
           textDirection: pw.TextDirection.rtl,
           build: (pw.Context context) {
-            List<pw.Widget> widgets = [
+            // Provide check/x symbols by drawing them
+            pw.Widget getStatusSymbol(bool? isPresent) {
+              if (isPresent == null) {
+                return pw.Text("-", style: pw.TextStyle(font: ttf));
+              }
+
+              if (isPresent) {
+                return pw.SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: pw.CustomPaint(
+                    painter: (PdfGraphics canvas, PdfPoint size) {
+                      canvas.setStrokeColor(PdfColors.blue);
+                      canvas.setLineWidth(2.0);
+                      // PDF Canvas (0,0) is bottom-left.
+                      canvas.moveTo(2, size.y - (size.y / 2));
+                      canvas.lineTo(size.x / 2.5, size.y - (size.y - 2));
+                      canvas.lineTo(size.x - 2, size.y - 2);
+                      canvas.strokePath();
+                    },
+                  ),
+                );
+              } else {
+                return pw.SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: pw.CustomPaint(
+                    painter: (PdfGraphics canvas, PdfPoint size) {
+                      canvas.setStrokeColor(PdfColors.red);
+                      canvas.setLineWidth(2.0);
+                      canvas.moveTo(0, 0);
+                      canvas.lineTo(size.x, size.y);
+                      canvas.moveTo(size.x, 0);
+                      canvas.lineTo(0, size.y);
+                      canvas.strokePath();
+                    },
+                  ),
+                );
+              }
+            }
+
+            final List<pw.Widget> pdfContent = [];
+
+            pdfContent.add(
+              // --- Premium Header ---
               pw.Header(
                 level: 0,
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text(
-                      reportName,
-                      style: pw.TextStyle(fontSize: 20, font: ttf),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'visitation_stats_report'.tr(flutterContext),
+                          style: pw.TextStyle(
+                            fontSize: 24,
+                            font: ttf,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.blue900,
+                          ),
+                        ),
+                        pw.Text(
+                          'group_report_name'
+                              .tr(flutterContext)
+                              .replaceFirst('%s', reportName),
+                          style: pw.TextStyle(
+                            fontSize: 14,
+                            font: ttf,
+                            color: PdfColors.grey700,
+                          ),
+                        ),
+                      ],
                     ),
-                    pw.Text(
-                      timestamp,
-                      style: pw.TextStyle(fontSize: 12, font: ttf),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          DateFormat('yyyy/MM/dd').format(DateTime.now()),
+                          style: pw.TextStyle(fontSize: 12, font: ttf),
+                        ),
+                        pw.Text(
+                          'extraction_time'
+                              .tr(flutterContext)
+                              .replaceFirst('%s', timestamp),
+                          style: pw.TextStyle(
+                            fontSize: 10,
+                            font: ttf,
+                            color: PdfColors.grey600,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              pw.SizedBox(height: 20),
-            ];
+            );
+            pdfContent.add(pw.SizedBox(height: 15));
 
-            for (var detailDoc in detailsResult.documents) {
-              final grade = detailDoc.data['grade'] ?? "";
-              widgets.add(
-                pw.Padding(
-                  padding: const pw.EdgeInsets.symmetric(vertical: 10),
+            // Generate a separate table for each grade
+            for (var gradeItem in gradesData) {
+              final gradeName = gradeItem['grade'] ?? "";
+              final List<dynamic> visited = gradeItem['visitedList'] ?? [];
+              final List<dynamic> unvisited = gradeItem['unvisitedList'] ?? [];
+
+              final List<Map<String, dynamic>> flatList = [];
+              for (var v in visited) {
+                final mapV = (v is Map) ? v : {'name': v.toString()};
+                flatList.add({...mapV, 'isVisited': true});
+              }
+              for (var u in unvisited) {
+                final mapU = (u is Map) ? u : {'name': u.toString()};
+                flatList.add({...mapU, 'isVisited': false});
+              }
+
+              // Sort: Visited first, then Name
+              flatList.sort((a, b) {
+                if (a['isVisited'] != b['isVisited']) {
+                  return (a['isVisited'] == true) ? -1 : 1;
+                }
+                return (a['name'] ?? "").compareTo(b['name'] ?? "");
+              });
+
+              pdfContent.add(
+                pw.Center(
                   child: pw.Text(
-                    "🔹 فصل: $grade",
+                    gradeName,
                     style: pw.TextStyle(
                       fontSize: 16,
-                      fontWeight: pw.FontWeight.bold,
                       font: ttf,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.blueGrey800,
                     ),
                   ),
                 ),
               );
+              pdfContent.add(pw.SizedBox(height: 8));
 
-              final List<dynamic> visited =
-                  (detailDoc.data['visited'] as List? ?? [])
-                      .map((e) => (e is String) ? jsonDecode(e) : e)
-                      .toList();
-              final List<dynamic> unvisited =
-                  (detailDoc.data['unvisited'] as List? ?? [])
-                      .map((e) => (e is String) ? jsonDecode(e) : e)
-                      .toList();
-
-              final List<List<String>> tableData = [];
-              for (var v in visited) {
-                tableData.add([
-                  v['name'] ?? "",
-                  "✅ تم افتقاده",
-                  v['visitedBy'] ?? "",
-                ]);
-              }
-              for (var u in unvisited) {
-                tableData.add([u['name'] ?? "", "❌ لم يتم افتقاد", ""]);
-              }
-
-              widgets.add(
-                pw.TableHelper.fromTextArray(
-                  headers: ['الاسم', 'الحالة', 'بواسطة'],
-                  data: tableData,
-                  headerStyle: pw.TextStyle(
-                    fontWeight: pw.FontWeight.bold,
-                    font: ttf,
-                  ),
-                  cellStyle: pw.TextStyle(font: ttf),
-                  headerDecoration: const pw.BoxDecoration(
-                    color: PdfColors.grey300,
-                  ),
-                  cellAlignment: pw.Alignment.center,
+              pdfContent.add(
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey400),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(3), // Name
+                    1: const pw.FlexColumnWidth(2), // Status
+                    2: const pw.FlexColumnWidth(3), // Visited By
+                  },
+                  children: [
+                    // Table Header
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.blue800,
+                      ),
+                      children: [
+                        _buildHeaderCell('name'.tr(flutterContext), ttf),
+                        _buildHeaderCell('status'.tr(flutterContext), ttf),
+                        _buildHeaderCell('by'.tr(flutterContext), ttf),
+                      ],
+                    ),
+                    // Data Rows
+                    ...flatList.isEmpty
+                        ? [
+                            pw.TableRow(
+                              children: [
+                                _buildDataCell(
+                                  'no_data_available_print'.tr(flutterContext),
+                                  ttf,
+                                ),
+                                _buildDataCell("-", ttf),
+                                _buildDataCell("-", ttf),
+                              ],
+                            ),
+                          ]
+                        : flatList.map((item) {
+                            return pw.TableRow(
+                              children: [
+                                pw.Padding(
+                                  padding: const pw.EdgeInsets.all(4),
+                                  child: pw.Text(
+                                    _cleanPdfText(item['name'] ?? ""),
+                                    textAlign: pw.TextAlign.center,
+                                    style: pw.TextStyle(fontSize: 9, font: ttf),
+                                  ),
+                                ),
+                                pw.Padding(
+                                  padding: const pw.EdgeInsets.all(4),
+                                  child: pw.Center(
+                                    child: getStatusSymbol(
+                                      item['isVisited'] == true,
+                                    ),
+                                  ),
+                                ),
+                                pw.Padding(
+                                  padding: const pw.EdgeInsets.all(4),
+                                  child: pw.Text(
+                                    _cleanPdfText(item['visitedBy'] ?? "-"),
+                                    textAlign: pw.TextAlign.center,
+                                    style: pw.TextStyle(fontSize: 9, font: ttf),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                    // --- Total Row ---
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.grey300,
+                      ),
+                      children: [
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            'total'.tr(flutterContext),
+                            textAlign: pw.TextAlign.center,
+                            style: pw.TextStyle(
+                              fontSize: 10,
+                              font: ttf,
+                              fontWeight: pw.FontWeight.bold,
+                              color: PdfColors.blue900,
+                            ),
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            "${flatList.where((e) => e['isVisited'] == true).length} / ${flatList.length}",
+                            textAlign: pw.TextAlign.center,
+                            style: pw.TextStyle(
+                              fontSize: 10,
+                              font: ttf,
+                              fontWeight: pw.FontWeight.bold,
+                              color: PdfColors.blue900,
+                            ),
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            "",
+                            textAlign: pw.TextAlign.center,
+                            style: pw.TextStyle(fontSize: 10, font: ttf),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               );
+              pdfContent.add(pw.SizedBox(height: 15));
             }
 
-            return widgets;
+            // Generate Multi-Colored Bar Chart for Bar comparison at the end
+            if (gradesData.isNotEmpty) {
+              double maxVal = 0;
+              final List<String> gradeLabels = [];
+              final List<double> percentages = [];
+
+              for (var gradeItem in gradesData) {
+                final gradeName = gradeItem['grade'] ?? "";
+                final List<dynamic> visited = gradeItem['visitedList'] ?? [];
+                final List<dynamic> unvisited =
+                    gradeItem['unvisitedList'] ?? [];
+
+                int gradeTotal = visited.length + unvisited.length;
+                int gradeVisited = visited.length;
+
+                double pct = gradeTotal > 0
+                    ? (gradeVisited / gradeTotal) * 100
+                    : 0;
+                if (pct > maxVal) maxVal = pct;
+
+                // Only add if it has a real name
+                if (gradeName.isNotEmpty) {
+                  gradeLabels.add(gradeName);
+                  percentages.add(pct);
+                }
+              }
+
+              if (maxVal == 0) maxVal = 100;
+
+              // Fix NaN exception in PDF rendering when there is only one grade
+              if (gradeLabels.length == 1) {
+                gradeLabels.add(" ");
+                percentages.add(0.0);
+              }
+
+              if (gradeLabels.isNotEmpty) {
+                // Predefined distinct colors for bars
+                final List<PdfColor> barColors = [
+                  PdfColors.blue,
+                  PdfColors.orange,
+                  PdfColors.green,
+                  PdfColors.red,
+                  PdfColors.purple,
+                  PdfColors.teal,
+                  PdfColors.pink,
+                  PdfColors.cyan,
+                  PdfColors.indigo,
+                  PdfColors.amber,
+                ];
+
+                final List<pw.Dataset> datasets = [];
+                for (int i = 0; i < percentages.length; i++) {
+                  // Keep padding block dataset
+                  final isPadding =
+                      gradeLabels[i] == " " && percentages[i] == 0.0;
+
+                  datasets.add(
+                    pw.BarDataSet(
+                      color: isPadding
+                          ? PdfColors.white
+                          : barColors[i % barColors.length],
+                      width: 40,
+                      data: [pw.PointChartValue(i.toDouble(), percentages[i])],
+                    ),
+                  );
+                }
+
+                pdfContent.add(
+                  pw.Center(
+                    child: pw.Container(
+                      height: 200,
+                      width:
+                          (gradeLabels.length * 80.0) + 100, // Tighter cluster
+                      child: pw.Chart(
+                        title: pw.Text(
+                          'chart_visitation_comparison'.tr(flutterContext),
+                          style: pw.TextStyle(
+                            font: ttf,
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        grid: pw.CartesianGrid(
+                          xAxis: pw.FixedAxis.fromStrings(
+                            List<String>.generate(
+                              gradeLabels.length,
+                              (index) => _cleanPdfText(gradeLabels[index]),
+                            ),
+                            marginStart: 20,
+                            marginEnd: 20,
+                            ticks: true,
+                            textStyle: pw.TextStyle(font: ttf, fontSize: 8),
+                          ),
+                          yAxis: pw.FixedAxis(
+                            [0, if (maxVal > 0) maxVal / 2, maxVal],
+                            format: (v) => '${v.toInt()}%',
+                            ticks: true,
+                            textStyle: pw.TextStyle(font: ttf, fontSize: 8),
+                          ),
+                        ),
+                        datasets: datasets,
+                      ),
+                    ),
+                  ),
+                );
+                pdfContent.add(pw.SizedBox(height: 20));
+              }
+            }
+
+            return pdfContent;
           },
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save(),
-        name: 'visits_${reportDoc.$id}.pdf',
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            appBar: AppBar(
+              title: Text('visitation_stats_report'.tr(context)),
+              backgroundColor: Colors.blue.shade800,
+            ),
+            body: PdfPreview(
+              build: (format) async => pdf.save(),
+              pdfFileName: 'visits_${reportDoc.$id}.pdf',
+              canChangeOrientation: false,
+              canChangePageFormat: false,
+              canDebug: false,
+            ),
+          ),
+        ),
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ حدث خطأ أثناء الطباعة: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'print_error'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
+    }
+  }
+
+  pw.Widget _buildHeaderCell(String text, pw.Font font) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(5),
+      child: pw.Text(
+        _cleanPdfText(text),
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(
+          color: PdfColors.white,
+          font: font,
+          fontWeight: pw.FontWeight.bold,
+          fontSize: 10,
+        ),
+      ),
+    );
+  }
+
+  pw.Widget _buildDataCell(String text, pw.Font font, {bool isBold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(5),
+      child: pw.Text(
+        _cleanPdfText(text),
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(
+          font: font,
+          fontSize: 9,
+          fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+      ),
+    );
+  }
+
+  String _cleanPdfText(String? text) {
+    if (text == null || text.isEmpty) return "-";
+    // Robust cleaning logic to remove emojis and unsupported Unicode that crash TtfWriter
+    try {
+      final safeText = text.replaceAll(
+        RegExp(
+          r'[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\.\,\-\_\:\;\!\?\#\%\&\(\)\[\]\/\|]',
+        ),
+        '',
+      );
+      return safeText.trim().isEmpty ? "-" : safeText;
+    } catch (_) {
+      return "-";
     }
   }
 }

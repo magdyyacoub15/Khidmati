@@ -10,7 +10,8 @@ import 'dart:convert';
 import '../services/image_service.dart';
 import '../services/data_cache_service.dart'; // 🚀 Added Cache Service
 import '../services/permission_service.dart';
-import 'dart:io';
+import 'package:universal_io/io.dart';
+import '../l10n/app_translations.dart';
 
 const String studentsCollection = "students";
 const String servantsCollection = "servants";
@@ -49,8 +50,6 @@ class _VisitedPageState extends State<VisitedPage> {
   // 🚀 State for Grades
   List<String> _grades = [];
   bool _isLoadingGrades = true;
-  static const String visitedReportsDetailsCollectionId =
-      'visited_reports_details';
 
   // 🔄 متغيرات الترحيل
   static const String _promotionPassword = '123456';
@@ -81,38 +80,42 @@ class _VisitedPageState extends State<VisitedPage> {
   }
 
   Future<void> _showManualSaveDialogForAllGrades() async {
-    _weekNameController.text =
-        "تقرير افتقاد الأسبوع ${DateFormat('yyyy-MM-dd').format(_selectedDate)}";
+    _weekNameController.text = 'visit_report_weekly'
+        .tr(context)
+        .replaceFirst('%s', DateFormat('yyyy-MM-dd').format(_selectedDate));
+
+    String savingStatus = 'preparing_status'.tr(context);
 
     await showDialog(
       context: context,
+      barrierDismissible: !_isSaving,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: const Text("حفظ الإحصائيات لجميع السنوات"),
+            title: Text('save_stats_all_years'.tr(context)),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!_canWrite)
-                    const Text(
-                      "⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط.",
-                      style: TextStyle(color: Colors.red),
+                    Text(
+                      'subscription_read_only_warning'.tr(context),
+                      style: const TextStyle(color: Colors.red),
                     ),
                   const SizedBox(height: 8),
                   TextField(
                     enabled: _canWrite,
                     controller: _weekNameController,
-                    decoration: const InputDecoration(
-                      labelText: "اسم التقرير الموحد",
-                      hintText: "مثال: تقرير افتقاد شهر سبتمبر",
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: 'unified_report_name'.tr(context),
+                      hintText: 'example_report_name'.tr(context),
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      const Text("تاريخ التقرير:"),
+                      Text("${'report_date'.tr(context)}:"),
                       const SizedBox(width: 8),
                       Expanded(
                         child: TextButton(
@@ -132,7 +135,14 @@ class _VisitedPageState extends State<VisitedPage> {
                                     setDialogState(() {
                                       _selectedDate = picked;
                                       _weekNameController.text =
-                                          "تقرير افتقاد الأسبوع ${DateFormat('yyyy-MM-dd').format(_selectedDate)}";
+                                          'visit_report_weekly'
+                                              .tr(context)
+                                              .replaceFirst(
+                                                '%s',
+                                                DateFormat(
+                                                  'yyyy-MM-dd',
+                                                ).format(_selectedDate),
+                                              );
                                     });
                                   }
                                 },
@@ -151,45 +161,43 @@ class _VisitedPageState extends State<VisitedPage> {
                       color: Colors.red.shade50,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
-                      "⚠️ سيتم حفظ الإحصائيات الحالية لجميع السنوات (أولى، تانية، تالتة) وإعادة تعيين حالات الافتقاد لكل الصفوف.",
-                      style: TextStyle(
+                    child: Text(
+                      'save_stats_warning'.tr(context),
+                      style: const TextStyle(
                         color: Colors.red,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
+
+                  if (_isSaving) ...[
+                    const SizedBox(height: 20),
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 8),
+                    Text(
+                      savingStatus,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
-                child: const Text("إلغاء"),
-              ),
+              if (!_isSaving)
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('cancel'.tr(context)),
+                ),
               ElevatedButton(
                 onPressed: (_isSaving || !_canWrite)
                     ? null
                     : () async {
                         if (await _checkInternet() == false) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                "❌ هذه العملية تتطلب اتصالاً بالإنترنت.",
-                              ),
-                            ),
-                          );
                           return;
                         }
 
                         if (_weekNameController.text.trim().isEmpty) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("⚠️ يرجى إدخال اسم التقرير"),
-                            ),
-                          );
                           return;
                         }
 
@@ -197,6 +205,11 @@ class _VisitedPageState extends State<VisitedPage> {
                         await _saveAllGradesStatsAndReset(
                           _weekNameController.text.trim(),
                           _selectedDate,
+                          (status) {
+                            if (context.mounted) {
+                              setDialogState(() => savingStatus = status);
+                            }
+                          },
                         );
                         setDialogState(() => _isSaving = false);
 
@@ -208,9 +221,12 @@ class _VisitedPageState extends State<VisitedPage> {
                     ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(color: Colors.white),
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
                       )
-                    : const Text("حفظ وإعادة تعيين الكل"),
+                    : Text('save_and_reset_all'.tr(context)),
               ),
             ],
           );
@@ -222,11 +238,12 @@ class _VisitedPageState extends State<VisitedPage> {
   Future<void> _saveAllGradesStatsAndReset(
     String weekName,
     DateTime selectedDate,
+    Function(String) onProgress,
   ) async {
     if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('subscription_expired'.tr(context))),
+      );
       return;
     }
     setState(() => _isSaving = true);
@@ -237,17 +254,35 @@ class _VisitedPageState extends State<VisitedPage> {
     final reportDocumentId = "Report_$formattedDateTime";
 
     final currentUser = await UserService().getCurrentUserName();
+    if (!mounted) return;
 
-    final List<Map<String, dynamic>> summaryData = [];
+    // { "Grade Name": { "visited": [...], "unvisited": [...], "stats": {...} } }
+    final Map<String, dynamic> fullReportData = {};
+    final List<Map<String, dynamic>> summaryData =
+        []; // For legacy/quick view if needed
+
     int totalOverall = 0;
     int visitedOverall = 0;
 
     try {
       final allGrades = await _gradeService.getGrades();
+      if (!mounted) return;
+      final List<String> allVisitedIdsToReset =
+          []; // 🚀 القائمة المُجمعة لكل معرفات المخدومين المطلوب تصفيرهم
 
-      for (String grade in allGrades) {
+      for (int gIndex = 0; gIndex < allGrades.length; gIndex++) {
+        final grade = allGrades[gIndex];
+        if (!mounted) {
+          return;
+        }
+        final gatheringDataMsg = 'gathering_grade_data'.tr(context);
+        onProgress(
+          "$gatheringDataMsg $grade (${gIndex + 1}/${allGrades.length})...",
+        );
+
         final List<Map<String, dynamic>> visitedKids = [];
         final List<Map<String, dynamic>> unvisitedKids = [];
+
         String? lastId;
         bool hasMore = true;
 
@@ -294,18 +329,9 @@ class _VisitedPageState extends State<VisitedPage> {
                 ...kidData,
                 "visitedBy": visitedBy.isNotEmpty ? visitedBy : currentUser,
               });
-
-              // Reset status immediately to avoid separate loop
-              await _databases.updateDocument(
-                databaseId: databaseId,
-                collectionId: studentsCollectionId,
-                documentId: doc.$id,
-                data: {
-                  'isVisited': false,
-                  'visitedBy': '',
-                  'timestamp': DateTime.now().toIso8601String(),
-                },
-              );
+              allVisitedIdsToReset.add(
+                doc.$id,
+              ); // 🚀 تجميع المعرفات هنا بدلاً من تصفيرها فوراً
             } else {
               unvisitedKids.add(kidData);
             }
@@ -322,44 +348,64 @@ class _VisitedPageState extends State<VisitedPage> {
         totalOverall += currentGradeTotal;
         visitedOverall += currentGradeVisited;
 
-        // Save detail for this grade in a separate collection
-        await _databases.createDocument(
-          databaseId: databaseId,
-          collectionId: visitedReportsDetailsCollectionId,
-          documentId: ID.unique(),
-          data: {
-            "reportId": reportDocumentId,
-            "groupId": _myGroupId,
-            "grade": grade,
+        final double percentage = currentGradeTotal == 0
+            ? 0.0
+            : (currentGradeVisited / currentGradeTotal) * 100;
+
+        // Add to Full Report Data
+        fullReportData[grade] = {
+          "visited": visitedKids,
+          "unvisited": unvisitedKids,
+          "stats": {
             "total": currentGradeTotal,
             "visitedCount": currentGradeVisited,
-            "percentage": currentGradeTotal == 0
-                ? 0.0
-                : (currentGradeVisited / currentGradeTotal) * 100,
-            // Convert to JSON string list
-            "visited": visitedKids.map((k) => jsonEncode(k)).toList(),
-            "unvisited": unvisitedKids.map((k) => jsonEncode(k)).toList(),
+            "percentage": percentage,
           },
-          permissions: _teamId != null
-              ? [
-                  Permission.read(Role.team(_teamId!)),
-                  Permission.update(Role.team(_teamId!)),
-                  Permission.delete(Role.team(_teamId!)),
-                ]
-              : null,
-        );
+        };
 
+        // Add to summary (lightweight)
         summaryData.add({
           "grade": grade,
           "total": currentGradeTotal,
           "visitedCount": currentGradeVisited,
-          "percentage": currentGradeTotal == 0
-              ? 0.0
-              : (currentGradeVisited / currentGradeTotal) * 100,
+          "percentage": percentage,
         });
       }
 
-      // Save the main report
+      if (!mounted) {
+        return;
+      }
+      // Save Report File
+      onProgress('uploading_report_file'.tr(context));
+      String fileId = '';
+      try {
+        final jsonString = jsonEncode(fullReportData);
+        final fileData = InputFile.fromBytes(
+          bytes: utf8.encode(jsonString),
+          filename:
+              'visit_report_${DateTime.now().millisecondsSinceEpoch}.json',
+        );
+
+        // Reuse the same attendance bucket
+        final uploadedFile = await AppwriteService().storage.createFile(
+          bucketId: AppwriteService.attendanceBucketId,
+          fileId: ID.unique(),
+          file: fileData,
+        );
+        fileId = uploadedFile.$id;
+      } catch (e) {
+        debugPrint("Error uploading visit report file: $e");
+        if (!mounted) {
+          throw Exception("Component unmounted during upload");
+        }
+        throw Exception("${'upload_report_failed'.tr(context)}: $e");
+      }
+
+      if (!mounted) {
+        return;
+      }
+      onProgress('saving_report_record'.tr(context));
+      // Save the main report document
       await _databases.createDocument(
         databaseId: databaseId,
         collectionId: visitedReportsCollectionId,
@@ -376,6 +422,7 @@ class _VisitedPageState extends State<VisitedPage> {
               ? 0.0
               : (visitedOverall / totalOverall) * 100,
           "summary": summaryData.map((s) => jsonEncode(s)).toList(),
+          "fileId": fileId, // New field
         },
         permissions: _teamId != null
             ? [
@@ -386,11 +433,60 @@ class _VisitedPageState extends State<VisitedPage> {
             : null,
       );
 
+      // 🚀 الخطوة الأخيرة والأهم: التصفير لا يحدث إلا بعد نجاح الحفظ تماماً
+      if (allVisitedIdsToReset.isNotEmpty) {
+        if (!mounted) {
+          return;
+        }
+        onProgress('resetting_visitation_status'.tr(context));
+        const int batchSize = 5;
+        for (var i = 0; i < allVisitedIdsToReset.length; i += batchSize) {
+          final end = (i + batchSize < allVisitedIdsToReset.length)
+              ? i + batchSize
+              : allVisitedIdsToReset.length;
+          final batch = allVisitedIdsToReset.sublist(i, end);
+
+          if (allVisitedIdsToReset.length > 20) {
+            if (!mounted) {
+              return;
+            }
+            onProgress(
+              "${'resetting_data'.tr(context)} (${i + batch.length}/${allVisitedIdsToReset.length})...",
+            );
+          }
+
+          try {
+            await Future.wait(
+              batch.map(
+                (docId) => _databases.updateDocument(
+                  databaseId: databaseId,
+                  collectionId: studentsCollectionId,
+                  documentId: docId,
+                  data: {
+                    'isVisited': false,
+                    'visitedBy': '',
+                    'timestamp': DateTime.now().toIso8601String(),
+                  },
+                ),
+              ),
+            );
+          } catch (e) {
+            debugPrint("Error resetting visit status for batch: $e");
+            // لن نمنع إكمال باقي العملية إن فشل تحديث وثيقة واحدة
+          }
+
+          // Throttle
+          if (end < allVisitedIdsToReset.length) {
+            await Future.delayed(const Duration(milliseconds: 200));
+          }
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              "✅ تم حفظ تقرير '$weekName' لجميع السنوات وإعادة التعيين بنجاح",
+              'save_report_success'.tr(context).replaceFirst('%s', weekName),
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 5),
@@ -402,7 +498,7 @@ class _VisitedPageState extends State<VisitedPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ فشل في الحفظ العام: $e"),
+            content: Text("${'general_save_failed'.tr(context)}: $e"),
             backgroundColor: Colors.red,
           ),
         );
@@ -442,7 +538,9 @@ class _VisitedPageState extends State<VisitedPage> {
         if (mounted) {
           setState(() {
             _myGroupId = cachedCtx['groupId']!;
-            _isAdmin = cachedCtx['role'] == 'admin';
+            _isAdmin =
+                cachedCtx['role'] == 'admin' ||
+                cachedCtx['role'] == 'super_admin';
             _isLoadingRole = false;
             _gradeService = GradeService(groupId: _myGroupId);
           });
@@ -458,7 +556,9 @@ class _VisitedPageState extends State<VisitedPage> {
         if (mounted) {
           setState(() {
             _myGroupId = lastData['groupId'];
-            _isAdmin = lastData['role'] == 'admin';
+            _isAdmin =
+                lastData['role'] == 'admin' ||
+                lastData['role'] == 'super_admin';
             _isLoadingRole = false;
             _gradeService = GradeService(groupId: _myGroupId);
           });
@@ -483,23 +583,24 @@ class _VisitedPageState extends State<VisitedPage> {
         }
       }
 
-      // We rely on cache heavily here.
-      // User updates logic is handled in selector pages usually.
-      // But let's fetch Team ID if missing.
-      if (_teamId == null || _teamId!.isEmpty) {
-        try {
-          final uDoc = await _databases.getDocument(
-            databaseId: databaseId,
-            collectionId: usersCollectionId,
-            documentId: user.$id,
-          );
-          if (mounted) {
-            setState(() {
-              _teamId = uDoc.data['teamId'];
-              // Also update role/group from live doc if needed
-            });
-          }
-        } catch (_) {}
+      try {
+        final uDoc = await _databases.getDocument(
+          databaseId: databaseId,
+          collectionId: usersCollectionId,
+          documentId: user.$id,
+        );
+
+        // Update Cache with fresh data to correct any invalid stored session
+        await DataCacheService().cacheUserGroupId(
+          user.$id,
+          uDoc.data['groupId'],
+          uDoc.data['teamId'],
+          uDoc.data['role'],
+        );
+
+        _updateState(uDoc.data);
+      } catch (e) {
+        debugPrint("Error fetching live user doc: $e");
       }
 
       _userSubscription?.close();
@@ -526,7 +627,8 @@ class _VisitedPageState extends State<VisitedPage> {
     if (mounted) {
       setState(() {
         final newGroupId = data['groupId'] ?? '';
-        _isAdmin = (data['role'] ?? 'user') == 'admin';
+        final role = data['role'] ?? 'user';
+        _isAdmin = role == 'admin' || role == 'super_admin';
         _isLoadingRole = false;
 
         if (newGroupId != _myGroupId) {
@@ -576,26 +678,24 @@ class _VisitedPageState extends State<VisitedPage> {
 
   Future<void> _showAddGradeDialog() async {
     if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('subscription_expired'.tr(context))),
+      );
       return;
     }
     final TextEditingController gradeController = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("إضافة فصل جديد"),
+        title: Text('add_new_grade_title'.tr(context)),
         content: TextField(
           controller: gradeController,
-          decoration: const InputDecoration(
-            hintText: "اسم الفصل (مثال: سنة رابعة)",
-          ),
+          decoration: InputDecoration(hintText: 'grade_name_hint'.tr(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -603,7 +703,7 @@ class _VisitedPageState extends State<VisitedPage> {
               if (newGrade.isNotEmpty) {
                 if (!_canWrite) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك.")),
+                    SnackBar(content: Text('subscription_expired'.tr(context))),
                   );
                   return;
                 }
@@ -632,7 +732,7 @@ class _VisitedPageState extends State<VisitedPage> {
                 }
               }
             },
-            child: const Text("إضافة"),
+            child: Text('add'.tr(context)),
           ),
         ],
       ),
@@ -643,23 +743,21 @@ class _VisitedPageState extends State<VisitedPage> {
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text("تعديل/حذف: $currentName"),
-        content: const Text(
-          "ماذا تريد أن تفعل؟\n\nتنبيه: تعديل الاسم لن يغير البيانات القديمة المرتبطة بالاسم القديم.",
-        ),
+        title: Text("${'edit_delete'.tr(context)}: $currentName"),
+        content: Text('edit_delete_warning'.tr(context)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel'.tr(context)),
           ),
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
               _showRenameDialog(currentName);
             },
-            child: const Text(
-              "تعديل الاسم",
-              style: TextStyle(color: Colors.blue),
+            child: Text(
+              'edit_name'.tr(context),
+              style: const TextStyle(color: Colors.blue),
             ),
           ),
           ElevatedButton(
@@ -668,36 +766,27 @@ class _VisitedPageState extends State<VisitedPage> {
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text("⚠️ تأكيد الحذف النهائي"),
-                  content: const Text(
-                    "هل أنت متأكد؟ سيتم حذف الفصل وكل المخدومين التابعين له (بما في ذلك صورهم، بياناتهم، وسجلات افتقادهم الفردية) بشكل نهائي من قاعدة البيانات ومساحة التخزين. لا يمكن التراجع عن هذه الخطوة.",
-                  ),
+                  title: Text('warning_final_delete_title'.tr(context)),
+                  content: Text('delete_grade_confirm'.tr(context)),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text("إلغاء"),
+                      child: Text('cancel'.tr(context)),
                     ),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
                       ),
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text("نعم، حذف الكل"),
+                      child: Text('yes_delete_all'.tr(context)),
                     ),
                   ],
                 ),
               );
 
               if (confirm == true) {
-                if (mounted) {
-                  if (!_canWrite) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("⚠️ انتهت صلاحية الاشتراك."),
-                      ),
-                    );
-                    return;
-                  }
+                if (!_canWrite) {
+                  return;
                 }
 
                 // Optimistic Update
@@ -709,13 +798,13 @@ class _VisitedPageState extends State<VisitedPage> {
                 }
 
                 try {
-                  // 1. Delete all students & their data first (requires online potentially?)
+                  // 1. Delete all students & their data first
                   // For a clean offline experience, we might want to skip the graduateStudents if offline
                   // or queue it. But graduateStudents involves listing all students.
-                  // Let's assume delete grade also cleans up or we queue the graduate action.
-                  // Actually, for simplicity, we'll queue the delete grade.
+                  // Let's assume delete grade also cleans up or we queue the delete action.
 
-                  await _graduateStudents(currentName);
+                  // Use a dummy callback for now since we are in a dialog without progress bar
+                  await _graduateStudents(currentName, (_) {});
                   await _gradeService.deleteGrade(currentName);
                   if (!context.mounted) return;
                   Navigator.pop(context);
@@ -727,14 +816,14 @@ class _VisitedPageState extends State<VisitedPage> {
                   });
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("✅ تم الحذف محلياً")),
+                      SnackBar(content: Text('deleted_locally'.tr(context))),
                     );
                     Navigator.pop(context);
                   }
                 }
               }
             },
-            child: const Text("حذف"),
+            child: Text('delete'.tr(context)),
           ),
         ],
       ),
@@ -743,9 +832,9 @@ class _VisitedPageState extends State<VisitedPage> {
 
   Future<void> _showRenameDialog(String oldName) async {
     if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('subscription_expired'.tr(context))),
+      );
       return;
     }
     final TextEditingController renameController = TextEditingController(
@@ -754,15 +843,15 @@ class _VisitedPageState extends State<VisitedPage> {
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("تغيير اسم الفصل"),
+        title: Text('change_grade_name'.tr(context)),
         content: TextField(
           controller: renameController,
-          decoration: const InputDecoration(labelText: "الاسم الجديد"),
+          decoration: InputDecoration(labelText: 'new_name'.tr(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -770,7 +859,7 @@ class _VisitedPageState extends State<VisitedPage> {
               if (newName.isNotEmpty && newName != oldName) {
                 if (!_canWrite) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك.")),
+                    SnackBar(content: Text('subscription_expired'.tr(context))),
                   );
                   return;
                 }
@@ -799,14 +888,14 @@ class _VisitedPageState extends State<VisitedPage> {
                   });
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("✅ تم التعديل محلياً")),
+                      SnackBar(content: Text('edited_locally'.tr(context))),
                     );
                     Navigator.pop(context);
                   }
                 }
               }
             },
-            child: const Text("حفظ"),
+            child: Text('save'.tr(context)),
           ),
         ],
       ),
@@ -820,97 +909,107 @@ class _VisitedPageState extends State<VisitedPage> {
   Future<void> _showPromotionDialog() async {
     final passwordController = TextEditingController();
     bool isProcessing = false;
+    String statusMessage = 'preparing'.tr(context);
+    double progressValue = 0.0;
 
     await showDialog(
       context: context,
+      barrierDismissible: !isProcessing,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: const Text("⚠️ ترحيل المخدومين وتخرج الدفعة"),
+            title: Text('promotion_graduation_title'.tr(context)),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!_canWrite)
-                    const Text(
-                      "⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط.",
-                      style: TextStyle(color: Colors.red),
+                    Text(
+                      'subscription_read_only_warning'.tr(context),
+                      style: const TextStyle(color: Colors.red),
                     ),
                   const SizedBox(height: 8),
-                  const Text(
-                    "هذه العملية ستقوم بترحيل المخدومين في جميع الفصول للفصل التالي، وحذف بيانات طلاب الفصل الأخير (تخرج الدفعة) مع سجلات افتقادهم الفردية.",
-                  ),
+                  Text('promotion_description'.tr(context)),
                   const SizedBox(height: 8),
-                  const Text(
-                    "⚠️ تنبيه: تقارير الحضور والافتقاد القديمة لن تتأثر.",
-                    style: TextStyle(
+                  Text(
+                    'promotion_warning'.tr(context),
+                    style: const TextStyle(
                       color: Colors.red,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: "الرقم السري للتأكيد",
-                      border: OutlineInputBorder(),
+                  if (!isProcessing)
+                    TextField(
+                      controller: passwordController,
+                      obscureText: true,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'confirmation_pin'.tr(context),
+                        border: const OutlineInputBorder(),
+                      ),
                     ),
-                  ),
+                  if (isProcessing) ...[
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(value: progressValue),
+                    const SizedBox(height: 8),
+                    Text(
+                      statusMessage,
+                      style: const TextStyle(fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: isProcessing
-                    ? null
-                    : () => Navigator.of(context).pop(),
-                child: const Text("إلغاء"),
-              ),
-              ElevatedButton(
-                onPressed: (isProcessing || !_canWrite)
-                    ? null
-                    : () async {
-                        if (await _checkInternet() == false) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                "❌ هذه العملية تتطلب اتصالاً بالإنترنت.",
-                              ),
-                            ),
-                          );
-                          return;
-                        }
+              if (!isProcessing)
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('cancel'.tr(context)),
+                ),
+              if (!isProcessing)
+                ElevatedButton(
+                  onPressed: (isProcessing || !_canWrite)
+                      ? null
+                      : () async {
+                          if (!_canWrite || await _checkInternet() == false) {
+                            return;
+                          }
 
-                        if (passwordController.text != _promotionPassword) {
-                          if (context.mounted) {
+                          if (!context.mounted) return;
+
+                          if (passwordController.text != _promotionPassword) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("❌ الرقم السري غير صحيح!"),
+                              SnackBar(
+                                content: Text('incorrect_pin'.tr(context)),
                               ),
                             );
+                            return;
                           }
-                          return;
-                        }
 
-                        setDialogState(() => isProcessing = true);
-                        await _performStudentPromotion();
-                        setDialogState(() => isProcessing = false);
+                          setDialogState(() {
+                            isProcessing = true;
+                            statusMessage = 'starting_process'.tr(context);
+                            progressValue = 0.0;
+                          });
 
-                        if (context.mounted) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                child: isProcessing
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(color: Colors.white),
-                      )
-                    : const Text("ترحيل وتأكيد"),
-              ),
+                          await _performStudentPromotion((msg, val) {
+                            if (context.mounted) {
+                              setDialogState(() {
+                                statusMessage = msg;
+                                progressValue = val;
+                              });
+                            }
+                          });
+
+                          if (context.mounted) {
+                            setDialogState(() => isProcessing = false);
+                            Navigator.of(context).pop();
+                          }
+                        },
+                  child: Text('promote_and_confirm'.tr(context)),
+                ),
             ],
           );
         },
@@ -918,42 +1017,84 @@ class _VisitedPageState extends State<VisitedPage> {
     );
   }
 
-  Future<void> _performStudentPromotion() async {
+  Future<void> _performStudentPromotion(
+    Function(String, double) onProgress,
+  ) async {
     if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('subscription_expired'.tr(context))),
+        );
+      }
       return;
     }
-    // The original instruction included `setState(() => _isSaving = true);` here.
-    // However, `_isSaving` is not declared in the provided code, and adding it
-    // would be an "unrelated edit" that makes the code syntactically incorrect
-    // without further modifications. The `_showPromotionDialog` already handles
-    // a processing state (`isProcessing`). Therefore, this line is omitted
-    // to maintain syntactic correctness and avoid unrelated edits.
+
     try {
       final grades = await _gradeService.getGrades();
+      if (!mounted) return;
       if (grades.isEmpty) {
-        throw Exception("لا توجد فصول للترحيل");
+        if (!mounted) {
+          throw Exception("Component unmounted during promotion check");
+        }
+        throw Exception('no_grades_to_promote'.tr(context));
       }
 
-      // 1. تخرج الدفعة الأخيرة (حذف المخدومين وسجلاتهم الفردية)
-      final lastGrade = grades.last;
-      await _graduateStudents(lastGrade);
+      final totalSteps =
+          grades.length; // 1 step for graduation + N-1 promotions
+      double currentStep = 0;
 
-      // 2. ترحيل الفصول المتبقية (من النهاية للبداية لتجنب التكرار)
+      // 1. تخرج الدفعة الأخيرة
+      final lastGrade = grades.last;
+      if (!mounted) {
+        return;
+      }
+      onProgress("${'graduating_batch'.tr(context)} $lastGrade...", 0.1);
+
+      await _graduateStudents(lastGrade, (msg) {
+        onProgress(msg, (currentStep / totalSteps) + 0.05);
+      });
+
+      currentStep++;
+      if (!mounted) {
+        return;
+      }
+      onProgress(
+        'batch_graduated_success'.tr(context),
+        currentStep / totalSteps,
+      );
+
+      // 2. ترحيل الفصول المتبقية
       for (int i = grades.length - 2; i >= 0; i--) {
         final fromGrade = grades[i];
         final toGrade = grades[i + 1];
-        await _updateStudentGrade(fromGrade, toGrade);
+
+        if (!mounted) {
+          return;
+        }
+        onProgress(
+          "${'promoting_from_to'.tr(context).replaceFirst('%s1', fromGrade).replaceFirst('%s2', toGrade)}...",
+          currentStep / totalSteps,
+        );
+
+        await _updateStudentGrade(fromGrade, toGrade, (msg) {
+          onProgress(msg, (currentStep / totalSteps) + 0.05);
+        });
+
+        currentStep++;
       }
+
+      if (!mounted) {
+        return;
+      }
+      onProgress('process_completed_success'.tr(context), 1.0);
+      await Future.delayed(const Duration(seconds: 1)); // Show 100% briefly
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("🎉 تم ترحيل المخدومين وتخرج الدفعة بنجاح!"),
+          SnackBar(
+            content: Text('promotion_graduation_success'.tr(context)),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
+            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -961,7 +1102,7 @@ class _VisitedPageState extends State<VisitedPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ فشل في عملية الترحيل: $e"),
+            content: Text("${'promotion_failed'.tr(context)}: $e"),
             backgroundColor: Colors.red,
           ),
         );
@@ -969,124 +1110,189 @@ class _VisitedPageState extends State<VisitedPage> {
     }
   }
 
-  Future<void> _graduateStudents(String grade) async {
-    if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
-      return;
-    }
-    // The original instruction included `setState(() => _isSaving = true);` here.
-    // This line is omitted for the same reasons as in `_performStudentPromotion`.
-    final result = await _databases.listDocuments(
-      databaseId: databaseId,
-      collectionId: studentsCollectionId,
-      queries: [
+  Future<void> _graduateStudents(
+    String grade,
+    Function(String) onStatus,
+  ) async {
+    String? lastId;
+    bool hasMore = true;
+    int totalDeleted = 0;
+
+    // First ensure we can fetch something to check count roughly or just iterate
+    while (hasMore) {
+      List<String> queries = [
         Query.equal('groupId', _myGroupId),
         Query.equal('grade', grade),
-        Query.limit(1000),
-      ],
-    );
+        Query.limit(100), // Fetch 100 at a time
+      ];
 
-    int studentCount = 0;
-    int visitCount = 0;
-
-    for (var doc in result.documents) {
-      final String kidId = doc.$id;
-      final String kidName = doc.data['name'] ?? '';
-      final String? photoUrl = doc.data['photoUrl'];
-      final imageService = ImageService();
-
-      // 1. Delete student profile photo if exists
-      if (photoUrl != null && photoUrl.isNotEmpty) {
-        try {
-          await imageService.deleteImageByUrl(photoUrl);
-        } catch (e) {
-          debugPrint("Error deleting profile photo for $kidName: $e");
-        }
+      if (lastId != null) {
+        queries.add(Query.cursorAfter(lastId));
       }
 
-      // 2. Delete individual visit records and their images
-      if (kidName.isNotEmpty) {
-        final visitsResult = await _databases.listDocuments(
-          databaseId: databaseId,
-          collectionId: 'individual_visits',
-          queries: [
-            Query.equal('groupId', _myGroupId),
-            Query.equal('kidName', kidName),
-            Query.limit(100),
-          ],
-        );
+      final result = await _databases.listDocuments(
+        databaseId: databaseId,
+        collectionId: studentsCollectionId,
+        queries: queries,
+      );
 
-        for (var visitDoc in visitsResult.documents) {
-          // Delete visit images
-          final List<dynamic> publicIds = visitDoc.data['publicIds'] ?? [];
-          if (publicIds.isNotEmpty) {
-            for (var id in publicIds) {
-              if (id is String) {
-                try {
-                  await imageService.deleteImage(id);
-                } catch (e) {
-                  debugPrint("Error deleting visit image $id: $e");
-                }
-              }
-            }
+      if (result.documents.isEmpty) {
+        hasMore = false;
+        break;
+      }
+
+      lastId = result.documents.last.$id;
+      final docs = result.documents;
+
+      // Process this chunk of 100 docs
+      // Use concurrency control: Process 5 at a time
+      const int concurrentDeletes = 5;
+      for (var i = 0; i < docs.length; i += concurrentDeletes) {
+        final end = (i + concurrentDeletes < docs.length)
+            ? i + concurrentDeletes
+            : docs.length;
+        final batch = docs.sublist(i, end);
+
+        final futures = batch.map((doc) async {
+          final String kidId = doc.$id;
+          final String kidName = doc.data['name'] ?? '';
+          final String? photoUrl = doc.data['photoUrl'];
+          final imageService = ImageService();
+
+          // 1. Delete student profile photo
+          if (photoUrl != null && photoUrl.isNotEmpty) {
+            try {
+              await imageService.deleteImageByUrl(photoUrl);
+            } catch (_) {}
           }
 
-          // Delete the visit document
+          // 2. Delete individual visit records
+          // (This part might still be query heavy, so we should be careful.
+          //  If a student has MANY visits, this could slow down.
+          //  Optimization: Fire and forget or simple limit)
+          if (kidName.isNotEmpty) {
+            try {
+              final visitsResult = await _databases.listDocuments(
+                databaseId: databaseId,
+                collectionId: 'individual_visits',
+                queries: [
+                  Query.equal('groupId', _myGroupId),
+                  Query.equal('kidName', kidName),
+                  Query.limit(100), // Limit deletion overhead
+                ],
+              );
+
+              for (var visitDoc in visitsResult.documents) {
+                // Delete images first
+                final List<dynamic> publicIds =
+                    visitDoc.data['publicIds'] ?? [];
+                for (var id in publicIds) {
+                  if (id is String) {
+                    try {
+                      await imageService.deleteImage(id);
+                    } catch (_) {}
+                  }
+                }
+                await _databases.deleteDocument(
+                  databaseId: databaseId,
+                  collectionId: 'individual_visits',
+                  documentId: visitDoc.$id,
+                );
+              }
+            } catch (_) {}
+          }
+
+          // 3. Delete student doc
           await _databases.deleteDocument(
             databaseId: databaseId,
-            collectionId: 'individual_visits',
-            documentId: visitDoc.$id,
+            collectionId: studentsCollectionId,
+            documentId: kidId,
           );
-          visitCount++;
+        });
+
+        await Future.wait(futures);
+        if (!mounted) return;
+        totalDeleted += batch.length;
+
+        if (totalDeleted % 10 == 0) {
+          onStatus(
+            "${'graduated_grade'.tr(context).replaceFirst('%s', grade)}: ${'deleted_students_count'.tr(context).replaceFirst('%s', totalDeleted.toString())}...",
+          );
         }
+
+        // Throttling to protect server
+        await Future.delayed(const Duration(milliseconds: 100));
       }
 
-      // 3. Delete the student document
-      await _databases.deleteDocument(
-        databaseId: databaseId,
-        collectionId: studentsCollectionId,
-        documentId: kidId,
-      );
-      studentCount++;
+      // Safety brake if needed, but pagination handles it
     }
 
-    debugPrint(
-      "Graduated $studentCount students and deleted $visitCount visit records from $grade.",
-    );
+    debugPrint("Graduated $totalDeleted students from $grade.");
   }
 
-  Future<void> _updateStudentGrade(String fromGrade, String toGrade) async {
-    if (!_canWrite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")));
-      return;
-    }
-    // The original instruction included `setState(() => _isSaving = true);` here.
-    // This line is omitted for the same reasons as in `_performStudentPromotion`.
-    final result = await _databases.listDocuments(
-      databaseId: databaseId,
-      collectionId: studentsCollectionId,
-      queries: [
+  Future<void> _updateStudentGrade(
+    String fromGrade,
+    String toGrade,
+    Function(String) onStatus,
+  ) async {
+    String? lastId;
+    bool hasMore = true;
+    int totalPromoted = 0;
+
+    while (hasMore) {
+      List<String> queries = [
         Query.equal('groupId', _myGroupId),
         Query.equal('grade', fromGrade),
-        Query.limit(1000),
-      ],
-    );
+        Query.limit(100),
+      ];
 
-    for (var doc in result.documents) {
-      await _databases.updateDocument(
+      if (lastId != null) {
+        queries.add(Query.cursorAfter(lastId));
+      }
+
+      final result = await _databases.listDocuments(
         databaseId: databaseId,
         collectionId: studentsCollectionId,
-        documentId: doc.$id,
-        data: {'grade': toGrade},
+        queries: queries,
       );
+
+      if (result.documents.isEmpty) {
+        hasMore = false;
+        break;
+      }
+
+      lastId = result.documents.last.$id;
+      final docs = result.documents;
+
+      // Update in batches of 10
+      const int batchSize = 10;
+      for (var i = 0; i < docs.length; i += batchSize) {
+        final end = (i + batchSize < docs.length) ? i + batchSize : docs.length;
+        final batch = docs.sublist(i, end);
+
+        final futures = batch.map(
+          (doc) => _databases.updateDocument(
+            databaseId: databaseId,
+            collectionId: studentsCollectionId,
+            documentId: doc.$id,
+            data: {'grade': toGrade},
+          ),
+        );
+
+        await Future.wait(futures);
+        if (!mounted) return;
+        totalPromoted += batch.length;
+
+        onStatus(
+          "${'promoted_students_count_from_to'.tr(context).replaceFirst('%s0', totalPromoted.toString()).replaceFirst('%s1', fromGrade).replaceFirst('%s2', toGrade)}...",
+        );
+
+        // Throttle
+        await Future.delayed(const Duration(milliseconds: 150));
+      }
     }
-    debugPrint(
-      "Promoted $fromGrade to $toGrade: ${result.documents.length} students.",
-    );
+
+    debugPrint("Promoted $totalPromoted students from $fromGrade to $toGrade.");
   }
 
   // تم نقل دوال حفظ التقرير إلى صفحة AttendanceTypeSelectorPage (تمت الإعادة)
@@ -1095,7 +1301,7 @@ class _VisitedPageState extends State<VisitedPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("الافتقاد"),
+        title: Text('visit'.tr(context)),
         actions: [
           if (_isAdmin) ...[
             IconButton(
@@ -1104,8 +1310,8 @@ class _VisitedPageState extends State<VisitedPage> {
                 color: _canWrite ? Colors.green : Colors.grey,
               ),
               tooltip: _canWrite
-                  ? "حفظ تقرير الافتقاد لجميع الفصول"
-                  : "انتهت صلاحية الاشتراك",
+                  ? 'save_visit_stats_all'.tr(context)
+                  : 'subscription_expired'.tr(context),
               onPressed: _showManualSaveDialogForAllGrades,
             ),
             IconButton(
@@ -1113,7 +1319,9 @@ class _VisitedPageState extends State<VisitedPage> {
                 Icons.school,
                 color: _canWrite ? Colors.blue : Colors.grey,
               ),
-              tooltip: _canWrite ? "ترحيل المخدومين" : "انتهت صلاحية الاشتراك",
+              tooltip: _canWrite
+                  ? 'promote_students'.tr(context)
+                  : 'subscription_expired'.tr(context),
               onPressed: _showPromotionDialog,
             ),
           ],
@@ -1122,7 +1330,7 @@ class _VisitedPageState extends State<VisitedPage> {
       floatingActionButton: (_isAdmin && _canWrite)
           ? FloatingActionButton(
               onPressed: _showAddGradeDialog,
-              tooltip: "إضافة فصل جديد",
+              tooltip: 'add_new_grade'.tr(context),
               child: const Icon(Icons.add),
             )
           : null,
@@ -1139,9 +1347,9 @@ class _VisitedPageState extends State<VisitedPage> {
             child: _isLoadingRole || (_isLoadingGrades && _grades.isEmpty)
                 ? const CircularProgressIndicator()
                 : _grades.isEmpty
-                ? const Text(
-                    "لا توجد فصول مضافة حالياً",
-                    style: TextStyle(fontSize: 18, color: Colors.white),
+                ? Text(
+                    'no_grades_added_yet'.tr(context),
+                    style: const TextStyle(fontSize: 18, color: Colors.white),
                   )
                 : ListView.builder(
                     shrinkWrap: true,

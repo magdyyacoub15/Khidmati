@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
 import 'package:intl/intl.dart';
 import 'package:appwrite/appwrite.dart' hide Locale;
 import 'package:appwrite/models.dart' as models;
@@ -9,7 +10,7 @@ import 'dart:async';
 
 import '../services/grade_service.dart';
 import '../services/appwrite_service.dart';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:image_picker/image_picker.dart';
 // 🚀 الإضافات لضغط الصور والتخزين المؤقت
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -20,12 +21,15 @@ import '../services/user_service.dart';
 import '../services/image_service.dart';
 import '../services/permission_service.dart';
 import '../services/data_cache_service.dart';
+import '../services/sync_service.dart';
 
 // ✨ إضافات عرض الصور والتكبير
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/kid.dart';
 import '../services/image_cache_service.dart';
 import '../widgets/full_screen_image.dart';
+import '../widgets/full_screen_image_gallery.dart'; // 🚀 Added Gallery
+import '../l10n/app_translations.dart';
 
 // Unified Kid model
 
@@ -57,14 +61,13 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
 
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
   RealtimeSubscription? _kidsSubscription;
   RealtimeSubscription? _userSubscription;
 
   List<String> _gradeOrder = [];
   String _myGroupId = '';
-  String _currentServantName = "خادم";
+  String _currentServantName = "unknown_servant";
   final TextEditingController _searchController = TextEditingController();
 
   static const String databaseId = AppwriteService.databaseId;
@@ -74,41 +77,76 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
   @override
   void initState() {
     super.initState();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
+    // ⚡ FIX: Removed context-dependent loading to avoid InheritedWidget error
     _loadUserData();
     _loadServantInfo();
     _searchController.addListener(_onSearchChanged);
   }
 
   Future<void> _loadUserData() async {
-    try {
-      final user = await _account.get();
-
-      // 1. Initial User Fetch
-      final userDoc = await _databases.getDocument(
-        databaseId: databaseId,
-        collectionId: usersCollectionId,
-        documentId: user.$id,
+    // 🚀 1. Try to load from cache FIRST (Non-blocking)
+    final cachedUserId = await UserService().getCachedUserId();
+    if (cachedUserId != null) {
+      final cachedCtx = await DataCacheService().getCachedUserGroupId(
+        cachedUserId,
       );
-
-      if (mounted) {
-        setState(() {
-          _myGroupId = userDoc.data['groupId'] ?? '';
-        });
-        if (_myGroupId.isNotEmpty) {
-          // 🚀 Load from cache FIRST for offline/fast load
-          _loadCachedKids();
-          _fetchKidsFromAppwrite();
-          _fetchGradeOrder();
-          _handleAutoNavigation();
+      if (cachedCtx != null) {
+        if (mounted) {
+          setState(() {
+            _myGroupId = cachedCtx['groupId'] ?? '';
+          });
+          if (_myGroupId.isNotEmpty) {
+            _loadCachedKids();
+            _fetchKidsFromAppwrite(); // This handles its own errors silently
+            _fetchGradeOrder();
+            _handleAutoNavigation();
+          }
         }
       }
+    }
 
-      // 2. Realtime User Listener (optional but good for consistency)
+    // 🚀 2. Background Refresh & Realtime Setup
+    try {
+      final user = await _account.get();
+      await UserService().getCurrentUser(); // Sync user to cache
+
+      try {
+        final userDoc = await _databases.getDocument(
+          databaseId: databaseId,
+          collectionId: usersCollectionId,
+          documentId: user.$id,
+        );
+
+        // Update local cache
+        await DataCacheService().cacheUserGroupId(
+          user.$id,
+          userDoc.data['groupId'],
+          userDoc.data['teamId'],
+          userDoc.data['role'],
+        );
+
+        if (mounted) {
+          final newGroupId = userDoc.data['groupId'] ?? '';
+          if (newGroupId != _myGroupId && newGroupId.isNotEmpty) {
+            setState(() {
+              _myGroupId = newGroupId;
+            });
+            _loadCachedKids();
+            _fetchKidsFromAppwrite();
+            _fetchGradeOrder();
+            _handleAutoNavigation();
+          }
+        }
+      } catch (e) {
+        debugPrint("Background live user doc fetch failed: $e");
+      }
+
+      _userSubscription?.close();
       _userSubscription = _realtime.subscribe([
         'databases.$databaseId.collections.$usersCollectionId.documents.${user.$id}',
       ]);
-      _userSubscription!.stream.listen((event) {
+      _userSubscription!.stream.listen((event) async {
         if (mounted) {
           final data = event.payload;
           final newGroupId = data['groupId'] ?? '';
@@ -124,7 +162,7 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
         }
       });
     } catch (e) {
-      debugPrint("❌ Error loading user data: $e");
+      debugPrint("Offline mode active or error in _loadUserData: $e");
     }
   }
 
@@ -266,9 +304,9 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
         setState(() => _isLoading = false);
         // Error Snackbar only if we don't have any cached data
         if (_allKids.isEmpty) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text("❌ خطأ في جلب البيانات: $e")));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${'error_fetching_data'.tr(context)}: $e')),
+          );
         }
       }
     }
@@ -296,7 +334,7 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
   Map<String, List<Kid>> _groupKidsByGrade(List<Kid> kids) {
     final Map<String, List<Kid>> grouped = {};
     for (var kid in kids) {
-      final String grade = kid.grade ?? 'غير محدد';
+      final String grade = kid.grade ?? 'unspecified_grade'.tr(context);
       if (!grouped.containsKey(grade)) {
         grouped[grade] = [];
       }
@@ -391,7 +429,9 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          'عدد المخدومين: ${kids.length} طفل',
+          'servants_count_kids'
+              .tr(context)
+              .replaceFirst('%s', kids.length.toString()),
           style: TextStyle(
             fontSize: MediaQuery.of(context).size.width * 0.033,
             color: Colors.grey.shade600,
@@ -472,7 +512,7 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('الافتقاد الفردي'),
+        title: Text('individual_visitation'.tr(context)),
         backgroundColor: const Color(0xFF0D47A1),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -495,7 +535,7 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: "بحث بالأطفال أو العنوان أو التليفون...",
+                    hintText: 'search_kids_hint'.tr(context),
                     prefixIcon: const Icon(
                       Icons.search,
                       color: Color(0xFF0288D1),
@@ -536,12 +576,12 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
                 children: [
                   _buildStatItem(
                     Icons.people,
-                    'إجمالي المخدومين',
+                    'total_servants_kids'.tr(context),
                     _allKids.length.toString(),
                   ),
                   _buildStatItem(
                     Icons.class_,
-                    'عدد الفصول',
+                    'number_of_grades'.tr(context),
                     _kidsByGrade.length.toString(),
                   ),
                 ],
@@ -564,7 +604,7 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
                             height: MediaQuery.of(context).size.height * 0.02,
                           ),
                           Text(
-                            'لا توجد نتائج للبحث',
+                            'no_search_results'.tr(context),
                             style: TextStyle(
                               color: Colors.grey.shade600,
                               fontSize:
@@ -574,15 +614,18 @@ class _IndividualVisitedPageState extends State<IndividualVisitedPage> {
                         ],
                       ),
                     )
-                  : ListView(
-                      padding: EdgeInsets.only(
-                        top: MediaQuery.of(context).size.height * 0.01,
-                        bottom: MediaQuery.of(context).size.height * 0.02,
+                  : RefreshIndicator(
+                      onRefresh: _reFetchKids,
+                      child: ListView(
+                        padding: EdgeInsets.only(
+                          top: MediaQuery.of(context).size.height * 0.01,
+                          bottom: MediaQuery.of(context).size.height * 0.02,
+                        ),
+                        children: _kidsByGrade.entries.map((entry) {
+                          if (entry.value.isEmpty) return const SizedBox.shrink();
+                          return _buildGradeSection(entry.key, entry.value);
+                        }).toList(),
                       ),
-                      children: _kidsByGrade.entries.map((entry) {
-                        if (entry.value.isEmpty) return const SizedBox.shrink();
-                        return _buildGradeSection(entry.key, entry.value);
-                      }).toList(),
                     ),
             ),
           ],
@@ -625,7 +668,6 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
 
   static const String visitsCollectionId = 'individual_visits';
 
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
   RealtimeSubscription? _kidsSubscription;
   static const String databaseId = 'main_db';
@@ -634,7 +676,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
   @override
   void initState() {
     super.initState();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _filteredKids = widget.kids;
     // 🚀 Load from cache FIRST
     _loadCachedVisitCounts();
@@ -831,9 +873,14 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
       _calculateHistoricalData(visits);
     } catch (e) {
       debugPrint("Error fetching visit counts from Appwrite: $e");
-      for (var kid in widget.kids) {
-        counts[kid.name] = 0;
-        visitedThisMonth[kid.name] = false;
+      // 🚀 Robustness: Don't override if we already have cached data
+      if (counts.isEmpty) {
+        for (var kid in widget.kids) {
+          counts[kid.name] = _kidVisitCounts[kid.name] ?? 0;
+          visitedThisMonth[kid.name] = _kidVisitedThisMonth[kid.name] ?? false;
+        }
+      } else {
+        return; // Already have data, don't update state with potentially empty/broken maps
       }
     }
 
@@ -904,11 +951,14 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("سجل نسبة الافتقاد", textAlign: TextAlign.right),
+        title: Text(
+          'visit_history_title'.tr(context),
+          textAlign: TextAlign.right,
+        ),
         content: SizedBox(
           width: double.maxFinite,
           child: sortedMonths.isEmpty
-              ? const Text("لا يوجد سجل بيانات متاح حالياً")
+              ? Text('no_data_available_now'.tr(context))
               : ListView.builder(
                   shrinkWrap: true,
                   itemCount: sortedMonths.length,
@@ -935,7 +985,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إغلاق"),
+            child: Text('close_button'.tr(context)),
           ),
         ],
       ),
@@ -970,7 +1020,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
             children: [
               Expanded(
                 child: Text(
-                  'مؤشر افتقاد الشهر الحالي',
+                  'visit_indicator_current_month'.tr(context),
                   style: TextStyle(
                     fontSize: MediaQuery.of(context).size.width * 0.04,
                     fontWeight: FontWeight.bold,
@@ -1006,7 +1056,10 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'تم افتقاد $visitedCount من أصل ${widget.kids.length}',
+                'visited_count_out_of'
+                    .tr(context)
+                    .replaceFirst('%s', visitedCount.toString())
+                    .replaceFirst('%s', widget.kids.length.toString()),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.032,
                   color: Colors.grey.shade600,
@@ -1015,7 +1068,9 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                '${widget.kids.length - visitedCount} متبقي',
+                'remaining_count'
+                    .tr(context)
+                    .replaceFirst('%s', '${widget.kids.length - visitedCount}'),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.032,
                   color: Colors.red.shade600,
@@ -1037,8 +1092,8 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
 
   Widget _buildKidTile(BuildContext context, Kid kid, int visitCount) {
     String phoneText = kid.phones.isNotEmpty
-        ? kid.getPhoneWithOwner(kid.phones.first)
-        : "لا يوجد هاتف مسجل";
+        ? kid.getPhoneWithOwner(context, kid.phones.first)
+        : 'no_registered_phone'.tr(context);
     Color phoneColor = kid.phones.isNotEmpty
         ? Colors.green.shade700
         : Colors.red.shade500;
@@ -1104,7 +1159,8 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                     backgroundColor: Colors.grey.shade100,
                     backgroundImage:
                         (kid.localImagePath != null &&
-                            kid.localImagePath!.isNotEmpty)
+                            kid.localImagePath!.isNotEmpty &&
+                            !kIsWeb) // 🚀 Check !kIsWeb
                         ? FileImage(File(kid.localImagePath!))
                         : ((kid.photoUrl != null && kid.photoUrl!.isNotEmpty)
                                   ? CachedNetworkImageProvider(
@@ -1116,7 +1172,8 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                     child:
                         ((kid.photoUrl == null || kid.photoUrl!.isEmpty) &&
                             (kid.localImagePath == null ||
-                                kid.localImagePath!.isEmpty))
+                                kid.localImagePath!.isEmpty ||
+                                kIsWeb)) // 🚀 Check kIsWeb
                         ? Icon(
                             Icons.face,
                             color: Colors.grey.shade400,
@@ -1277,7 +1334,10 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          "مخدومي ${widget.gradeTitle} (${widget.kids.length})",
+          'grade_kids_title'
+              .tr(context)
+              .replaceFirst('%s', widget.gradeTitle)
+              .replaceFirst('%s', widget.kids.length.toString()),
           style: TextStyle(fontSize: MediaQuery.of(context).size.width * 0.04),
         ),
         backgroundColor: Colors.transparent,
@@ -1296,7 +1356,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
           IconButton(
             icon: const Icon(Icons.history),
             onPressed: _showVisitHistoryDialog,
-            tooltip: "سجل الشهور السابقة",
+            tooltip: 'visit_history_tooltip'.tr(context),
           ),
           IconButton(
             icon: Icon(
@@ -1329,7 +1389,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: "بحث بالأطفال أو العنوان أو التليفون...",
+                    hintText: 'search_kids_hint'.tr(context),
                     prefixIcon: const Icon(
                       Icons.search,
                       color: Color(0xFF0288D1),
@@ -1379,7 +1439,7 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                             height: MediaQuery.of(context).size.height * 0.02,
                           ),
                           Text(
-                            'لا توجد نتائج للبحث',
+                            'no_search_results'.tr(context),
                             style: TextStyle(
                               color: Colors.grey.shade600,
                               fontSize:
@@ -1389,16 +1449,19 @@ class _GradeKidsPageState extends State<GradeKidsPage> {
                         ],
                       ),
                     )
-                  : ListView.builder(
-                      padding: EdgeInsets.symmetric(
-                        vertical: MediaQuery.of(context).size.height * 0.01,
+                  : RefreshIndicator(
+                      onRefresh: _refreshPageData,
+                      child: ListView.builder(
+                        padding: EdgeInsets.symmetric(
+                          vertical: MediaQuery.of(context).size.height * 0.01,
+                        ),
+                        itemCount: sortedKids.length,
+                        itemBuilder: (context, index) {
+                          final kid = sortedKids[index];
+                          final visitCount = _kidVisitCounts[kid.name] ?? 0;
+                          return _buildKidTile(context, kid, visitCount);
+                        },
                       ),
-                      itemCount: sortedKids.length,
-                      itemBuilder: (context, index) {
-                        final kid = sortedKids[index];
-                        final visitCount = _kidVisitCounts[kid.name] ?? 0;
-                        return _buildKidTile(context, kid, visitCount);
-                      },
                     ),
             ),
           ],
@@ -1470,6 +1533,10 @@ class KidsSearchDelegate extends SearchDelegate {
       final countB = visitCounts[b.name] ?? 0;
       return countA.compareTo(countB);
     });
+
+    if (filteredKids.isEmpty && query.isNotEmpty) {
+      return Center(child: Text('no_search_results'.tr(context)));
+    }
 
     return Container(
       color: Colors.grey.shade50,
@@ -1559,7 +1626,7 @@ class KidsSearchDelegate extends SearchDelegate {
                       height: MediaQuery.of(context).size.height * 0.004,
                     ),
                     Text(
-                      'هاتف: ${kid.getPhoneWithOwner(kid.phones.first)}',
+                      '${'phone_label'.tr(context)} ${kid.getPhoneWithOwner(context, kid.phones.first)}',
                       style: TextStyle(
                         fontSize: MediaQuery.of(context).size.width * 0.032,
                         color: Colors.green.shade700,
@@ -1623,7 +1690,6 @@ class KidVisitTracker extends StatefulWidget {
 class _KidVisitTrackerState extends State<KidVisitTracker> {
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
   RealtimeSubscription? _visitSubscription;
 
@@ -1634,7 +1700,8 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
   final ImageService _imageService = ImageService();
 
   // 🚀 متغيرات رفع الصور
-  final List<File> _selectedImages = [];
+  // 🚀 Modified for Web Support (Use XFile instead of File)
+  final List<XFile> _selectedImages = [];
   bool _isUploading = false;
   String? _currentUserEmail;
 
@@ -1642,10 +1709,21 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
   bool _isVisitsLoading = true;
   bool _canAddVisit = true; // 🚀 New: Subscription enforcement
 
+  /// Helper function to safely unbox cached Appwrite data that might be nested
+  Map<String, dynamic> _getActualData(dynamic inputData) {
+    if (inputData is Map<String, dynamic>) {
+      if (inputData.containsKey('data') && inputData['data'] is Map) {
+        return Map<String, dynamic>.from(inputData['data']);
+      }
+      return inputData;
+    }
+    return {};
+  }
+
   @override
   void initState() {
     super.initState();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _initUser();
     // 🚀 Load from cache FIRST
     _loadCachedVisits();
@@ -1716,7 +1794,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       await DataCacheService().cacheKidVisits(
         widget.groupId,
         widget.kid.name,
-        result.documents.map((e) => e.data).toList(),
+        result.documents.map((e) => e.toMap()).toList(),
       );
 
       // 2. Realtime Listener
@@ -1782,12 +1860,54 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
     if (!await PermissionService.canWrite(widget.groupId)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")),
+          SnackBar(content: Text('subscription_expired_msg'.tr(context))),
         );
       }
       return;
     }
     try {
+      final bool online = await SyncService().isOnline();
+
+      // 🚀 Offline Logic
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'individual_visit_delete',
+          'data': {
+            'visitId': visitId,
+            'groupId': widget.groupId,
+            'kidName': widget.kid.name,
+            'kidGrade': widget.kid.grade,
+          },
+        });
+
+        // 🚀 Optimistic UI
+        if (mounted) {
+          setState(() {
+            _visits.removeWhere((v) => v.$id == visitId);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('visit_deleted_success_offline'.tr(context)),
+              backgroundColor: Colors.orange.shade800,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+
+        // Update Cache
+        await DataCacheService().removeIndividualVisitFromCache(
+          widget.groupId,
+          widget.kid.grade ?? 'unspecified_grade',
+          visitId,
+        );
+        await DataCacheService().removeKidVisitFromCache(
+          widget.groupId,
+          widget.kid.name,
+          visitId,
+        );
+        return;
+      }
+
       // 1. جلب بيانات الزيارة قبل حذفها للحصول على معرفات الصور
       final doc = await _databases.getDocument(
         databaseId: databaseId,
@@ -1823,7 +1943,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('✅ تم حذف الزيارة وجميع ملحقاتها بنجاح'),
+            content: Text('visit_deleted_success'.tr(context)),
             backgroundColor: Colors.green.shade600,
             behavior: SnackBarBehavior.floating,
           ),
@@ -1835,7 +1955,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ فشل في حذف الزيارة: $e'),
+            content: Text('${'visit_delete_failed'.tr(context)}: $e'),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
           ),
@@ -1853,11 +1973,15 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text("تأكيد الحذف"),
-          content: Text("هل أنت متأكد من حذف زيارة '$visitSubject'؟"),
+          title: Text("confirm_delete_title".tr(context)),
+          content: Text(
+            "confirm_delete_visit_message"
+                .tr(context)
+                .replaceFirst('%s', visitSubject),
+          ),
           actions: [
             TextButton(
-              child: const Text('إلغاء'),
+              child: Text('cancel'.tr(context)),
               onPressed: () => Navigator.of(context).pop(),
             ),
             ElevatedButton(
@@ -1865,7 +1989,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 backgroundColor: Colors.red.shade700,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('حذف'),
+              child: Text('delete'.tr(context)),
               onPressed: () {
                 Navigator.of(context).pop();
                 _deleteVisit(visitId);
@@ -1878,7 +2002,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
   }
 
   void _showPhoneOptions(BuildContext context, String phone) {
-    final phoneWithOwner = widget.kid.getPhoneWithOwner(phone);
+    final phoneWithOwner = widget.kid.getPhoneWithOwner(context, phone);
 
     showModalBottomSheet(
       context: context,
@@ -1902,7 +2026,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              "خيارات الاتصال",
+              "phone_options_title".tr(context),
               style: TextStyle(
                 fontSize: MediaQuery.of(context).size.width * 0.045,
                 fontWeight: FontWeight.bold,
@@ -1935,7 +2059,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 size: MediaQuery.of(context).size.width * 0.06,
               ),
               title: Text(
-                "الاتصال المباشر",
+                "direct_call_option".tr(context),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.038,
                 ),
@@ -1952,7 +2076,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 size: MediaQuery.of(context).size.width * 0.06,
               ),
               title: Text(
-                "رسالة واتساب",
+                "whatsapp_message_option".tr(context),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.038,
                 ),
@@ -1969,7 +2093,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 size: MediaQuery.of(context).size.width * 0.06,
               ),
               title: Text(
-                "نسخ الرقم",
+                "copy_number_option".tr(context),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.038,
                 ),
@@ -1979,7 +2103,11 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 Clipboard.setData(ClipboardData(text: phone));
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text("✅ تم نسخ الرقم: $phone"),
+                    content: Text(
+                      "number_copied_success"
+                          .tr(context)
+                          .replaceFirst('%s', phone),
+                    ),
                     backgroundColor: Colors.green,
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -1993,7 +2121,10 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
   }
 
   // 🚀 دوال رفع الصور
-  Future<File> compressImage(File file) async {
+  Future<dynamic> compressImage(XFile file) async {
+    // 🚀 Skip compression on Web
+    if (kIsWeb) return file;
+
     final dir = await getTemporaryDirectory();
     final targetPath = path.join(
       dir.path,
@@ -2001,7 +2132,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
     );
 
     var result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
+      file.path,
       targetPath,
       quality: 85,
       minWidth: 1280,
@@ -2009,10 +2140,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       format: CompressFormat.jpeg,
     );
 
-    if (result != null) {
-      return File(result.path);
-    }
-    return file;
+    return result ?? file;
   }
 
   Future<void> _addVisit({
@@ -2025,19 +2153,22 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
   }) async {
     // 🔐 Check Permission
     if (!await PermissionService.canWrite(widget.groupId)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("⚠️ انتهت صلاحية الاشتراك أو لا يوجد اتصال"),
-          ),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("subscription_expired_or_offline".tr(context))),
+      );
       return;
     }
+
+    if (!mounted) return;
 
     setState(() {
       _isUploading = true;
     });
+
+    final errorMsg = "image_upload_failed".tr(context);
+    final statusCaptionBase = "new_visitation_status".tr(context);
+    final statusSource = "visitation_source".tr(context);
 
     try {
       final DateTime visitDateTime = DateTime(
@@ -2048,13 +2179,87 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
         time.minute,
       );
 
-      // 🚀 رفع الصور إذا كانت موجودة
+      final String visitId = ID.unique();
+      final Map<String, dynamic> visitData = {
+        'groupId': widget.groupId,
+        'kidName': widget.kid.name,
+        'kidGrade': widget.kid.grade,
+        'visitType': type,
+        'visitTitle': title,
+        'subject': subject,
+        'timestamp': visitDateTime.toIso8601String(),
+        'servantName': servantName,
+        'addedAt': DateTime.now().toIso8601String(),
+        'imageUrls': [], // Will be filled by sync or if online
+        'publicIds': [],
+      };
+
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        final List<String> localPaths = _selectedImages
+            .map((f) => f.path)
+            .toList();
+        await DataCacheService().addPendingOperation({
+          'type': 'individual_visit',
+          'data': {
+            ...visitData,
+            'localImagePaths': localPaths,
+            'visitId': visitId,
+          },
+        });
+
+        // 🚀 Optimistic UI
+        final tempDoc = models.Document(
+          $id: visitId,
+          $collectionId: _collectionName,
+          $databaseId: databaseId,
+          $createdAt: DateTime.now().toIso8601String(),
+          $updatedAt: DateTime.now().toIso8601String(),
+          $permissions: [],
+          data: {
+            ...visitData,
+            'localImagePaths':
+                localPaths, // Keep local paths for immediate display if needed
+          },
+        );
+
+        if (mounted) {
+          setState(() {
+            _visits.insert(0, tempDoc);
+            _isUploading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('visit_recorded_success_offline'.tr(context)),
+              backgroundColor: Colors.orange.shade800,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          _selectedImages.clear();
+        }
+
+        // Update Cache
+        await DataCacheService().upsertIndividualVisitInCache(
+          widget.groupId,
+          widget.kid.grade ?? 'unspecified_grade',
+          tempDoc.toMap(),
+        );
+        await DataCacheService().upsertKidVisitInCache(
+          widget.groupId,
+          widget.kid.name,
+          tempDoc.toMap(),
+        );
+        return;
+      }
+
+      // 🚀 رفع الصور إذا كانت موجودة (Online Path)
       List<String> imageLinks = [];
       List<String> publicIds = [];
 
       if (_selectedImages.isNotEmpty) {
-        for (File imageFile in _selectedImages) {
-          File compressedImage = await compressImage(imageFile);
+        for (XFile imageFile in _selectedImages) {
+          final compressedImage = await compressImage(imageFile);
           Map<String, String>? uploadResult = await _imageService.uploadImage(
             compressedImage,
           );
@@ -2063,30 +2268,23 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
             imageLinks.add(uploadResult['url']!);
             publicIds.add(uploadResult['id']!);
           } else {
-            throw Exception("فشل رفع إحدى الصور");
+            throw Exception(errorMsg);
           }
         }
       }
 
       // حفظ البيانات مع الصور
+      final finalData = {
+        ...visitData,
+        'imageUrls': imageLinks,
+        'publicIds': publicIds,
+      };
+
       await _databases.createDocument(
         databaseId: databaseId,
         collectionId: _collectionName,
-        documentId: ID.unique(),
-        data: {
-          'groupId':
-              widget.groupId, // 🔥 IMPORTANT: Appwrite needs groupId to filter
-          'kidName': widget.kid.name,
-          'kidGrade': widget.kid.grade,
-          'visitType': type,
-          'visitTitle': title,
-          'subject': subject,
-          'timestamp': visitDateTime.toIso8601String(),
-          'servantName': servantName,
-          'addedAt': DateTime.now().toIso8601String(),
-          'imageUrls': imageLinks,
-          'publicIds': publicIds,
-        },
+        documentId: visitId,
+        data: finalData,
       );
 
       // 🚀 [NEW] إضافة الصور إلى "الحالات" (Statuses)
@@ -2095,8 +2293,10 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
         for (String url in imageLinks) {
           await statusService.addStatus(
             imageUrl: url,
-            caption: "افتقاد جديد: ${widget.kid.name} - $title",
-            source: "الافتقاد",
+            caption: statusCaptionBase
+                .replaceFirst('%s', widget.kid.name)
+                .replaceFirst('%s', title),
+            source: statusSource,
           );
         }
       }
@@ -2104,7 +2304,11 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ تم تسجيل زيارة لـ ${widget.kid.name} بنجاح'),
+            content: Text(
+              'visit_recorded_success'
+                  .tr(context)
+                  .replaceFirst('%s', widget.kid.name),
+            ),
             backgroundColor: Colors.green.shade600,
             behavior: SnackBarBehavior.floating,
           ),
@@ -2120,7 +2324,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ فشل تسجيل الزيارة: $e'),
+            content: Text('${'visit_record_failed'.tr(context)}: $e'),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
           ),
@@ -2141,157 +2345,306 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FullScreenImage(
-          imageUrl: imageUrls[initialIndex],
-          tag: imageUrls[initialIndex],
+        builder: (_) => FullScreenImageGallery(
+          imageUrls: imageUrls,
+          initialIndex: initialIndex,
+          tagPrefix: 'gallery',
         ),
       ),
     );
   }
 
+  String _getLocalizedType(String dbType, BuildContext context) {
+    switch (dbType) {
+      case 'home_visit':
+      case 'زيارة منزلية':
+      case 'Home Visit':
+        return 'home_visit'.tr(context);
+      case 'phone_call':
+      case 'مكالمة تليفونية':
+      case 'Phone Call':
+        return 'phone_call'.tr(context);
+      case 'external_meeting':
+      case 'تقابل خارجي':
+      case 'External Meeting':
+        return 'external_meeting'.tr(context);
+      case 'study_follow_up':
+      case 'متابعة دراسية':
+      case 'Study Follow Up':
+        return 'study_follow_up'.tr(context);
+      case 'spiritual_activity':
+      case 'نشاط روحي':
+      case 'Spiritual Activity':
+        return 'spiritual_activity'.tr(context);
+      case 'visit_type_default':
+      case 'زيارة':
+      case 'Visit':
+        return 'visit_type_default'.tr(context);
+      default:
+        return dbType;
+    }
+  }
+
   // 🔥 دالة عرض تفاصيل الزيارة في Dialog
   void _showVisitDetailsDialog(
     Map<String, dynamic> visitData,
-    List<String> imageUrls,
+    List<String> cachedImageUrls,
   ) {
+    // 🚀 Unbox data if wrapped
+    visitData = _getActualData(visitData);
+
     final timestampStr = visitData['timestamp'];
     final date = timestampStr != null
         ? DateTime.parse(timestampStr)
         : DateTime.now();
-    final servant = visitData['servantName'] ?? 'خادم غير معروف';
-    final type = visitData['visitType'] ?? 'زيارة';
-    final title = visitData['visitTitle'] ?? ''; // 🔥 عنوان الموضوع
-    final subject = visitData['subject'] ?? 'لا يوجد موضوع'; // 🔥 موضوع الزيارة
+    final type = _getLocalizedType(
+      visitData['visitType'] ?? 'visit_type_default',
+      context,
+    );
+
+    // Get both remote and local image paths
+    final List<dynamic> localImagePaths = visitData['localImagePaths'] ?? [];
+    final bool hasUploadedImages = cachedImageUrls.isNotEmpty;
+    final bool hasLocalImages = localImagePaths.isNotEmpty;
+    final locale = Localizations.localeOf(context).languageCode;
+    final servant = visitData['servantName'] ?? 'unknown_servant'.tr(context);
 
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return Dialog(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Container(
+          child: ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.of(context).size.height * 0.8,
             ),
-            padding: EdgeInsets.all(MediaQuery.of(context).size.width * 0.04),
             child: SingleChildScrollView(
+              padding: EdgeInsets.all(MediaQuery.of(context).size.width * 0.05),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 🔥 عنوان الموضوع
-                  if (title.isNotEmpty) ...[
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: MediaQuery.of(context).size.width * 0.045,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue.shade900,
+                  // --- Header ---
+                  Row(
+                    children: [
+                      Icon(
+                        (type.contains('مكالمة') || type.contains('Call'))
+                            ? Icons.call_made
+                            : Icons.home_filled,
+                        color: Colors.blue.shade800,
+                        size: MediaQuery.of(context).size.width * 0.08,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    SizedBox(height: MediaQuery.of(context).size.height * 0.01),
-                    Divider(color: Colors.grey.shade300),
-                  ],
-
-                  // موضوع الزيارة
-                  Text(
-                    'موضوع الزيارة:',
-                    style: TextStyle(
-                      fontSize: MediaQuery.of(context).size.width * 0.038,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey.shade700,
-                    ),
+                      SizedBox(width: MediaQuery.of(context).size.width * 0.03),
+                      Expanded(
+                        child: Text(
+                          visitData['visitTitle'] ??
+                              visitData['subject'] ??
+                              'no_subject_available'.tr(context),
+                          style: TextStyle(
+                            fontSize: MediaQuery.of(context).size.width * 0.05,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                      ),
+                    ],
                   ),
-                  SizedBox(height: MediaQuery.of(context).size.height * 0.005),
-                  Text(
-                    subject,
-                    style: TextStyle(
-                      fontSize: MediaQuery.of(context).size.width * 0.036,
-                      color: Colors.black87,
-                    ),
+                  Divider(
+                    height: MediaQuery.of(context).size.height * 0.03,
+                    thickness: 2,
+                    color: Colors.grey.shade200,
                   ),
-                  SizedBox(height: MediaQuery.of(context).size.height * 0.015),
 
-                  // معلومات الزيارة
-                  _buildDetailRow('نوع الزيارة:', type, Icons.category),
-                  _buildDetailRow('الخادم:', servant, Icons.person),
+                  // --- Body ---
                   _buildDetailRow(
-                    'التاريخ:',
-                    DateFormat('yyyy/MM/dd', 'ar').format(date),
+                    'visit_type_label'.tr(context),
+                    type,
+                    Icons.category,
+                  ),
+                  _buildDetailRow(
+                    'servant_label'.tr(context),
+                    servant,
+                    Icons.person,
+                  ),
+                  _buildDetailRow(
+                    'date_label'.tr(context),
+                    DateFormat('yyyy/MM/dd', locale).format(date),
                     Icons.calendar_today,
                   ),
                   _buildDetailRow(
-                    'الوقت:',
-                    DateFormat('hh:mm a', 'ar').format(date),
+                    'time_label'.tr(context),
+                    DateFormat('hh:mm a', locale).format(date),
                     Icons.access_time,
                   ),
 
-                  // 🚀 عرض الصور إذا كانت موجودة
-                  if (imageUrls.isNotEmpty) ...[
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.015,
+                  SizedBox(height: MediaQuery.of(context).size.height * 0.02),
+                  Text(
+                    'visit_subject_details'.tr(context),
+                    style: TextStyle(
+                      fontSize: MediaQuery.of(context).size.width * 0.045,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade800,
                     ),
-                    Text(
-                      'الصور المرفقة:',
+                  ),
+                  SizedBox(height: MediaQuery.of(context).size.height * 0.01),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.all(
+                      MediaQuery.of(context).size.width * 0.04,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade100),
+                    ),
+                    child: Text(
+                      visitData['subject'] ??
+                          'no_details_available'.tr(context),
                       style: TextStyle(
-                        fontSize: MediaQuery.of(context).size.width * 0.038,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade700,
+                        fontSize: MediaQuery.of(context).size.width * 0.04,
+                        color: Colors.black87,
+                        height: 1.5,
                       ),
                     ),
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.008,
+                  ),
+
+                  // --- Images (if any) ---
+                  if (hasUploadedImages || hasLocalImages) ...[
+                    SizedBox(height: MediaQuery.of(context).size.height * 0.03),
+                    Text(
+                      'attached_images_label'.tr(context),
+                      style: TextStyle(
+                        fontSize: MediaQuery.of(context).size.width * 0.045,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade800,
+                      ),
                     ),
-                    Container(
-                      height: MediaQuery.of(context).size.height * 0.12,
+                    SizedBox(height: MediaQuery.of(context).size.height * 0.01),
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.15,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
-                        itemCount: imageUrls.length,
+                        itemCount: hasUploadedImages
+                            ? cachedImageUrls.length
+                            : localImagePaths.length,
                         itemBuilder: (context, index) {
+                          final isLocal = !hasUploadedImages;
+                          final imagePathOrUrl = isLocal
+                              ? localImagePaths[index].toString()
+                              : cachedImageUrls[index];
+
                           return GestureDetector(
-                            onTap: () => _showImageGallery(imageUrls, index),
+                            onTap: () {
+                              if (isLocal) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => FullScreenImageGallery(
+                                      localPaths: localImagePaths
+                                          .map((e) => e.toString())
+                                          .toList(),
+                                      initialIndex: index,
+                                      tagPrefix: 'local_gallery',
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                _showImageGallery(cachedImageUrls, index);
+                              }
+                            },
                             child: Container(
                               margin: EdgeInsets.only(
-                                right: MediaQuery.of(context).size.width * 0.02,
+                                right: MediaQuery.of(context).size.width * 0.03,
                               ),
-                              child: Image.network(
-                                imageUrls[index],
-                                width:
-                                    MediaQuery.of(context).size.height * 0.12,
-                                height:
-                                    MediaQuery.of(context).size.height * 0.12,
-                                fit: BoxFit.cover,
-                                loadingBuilder: (context, child, progress) {
-                                  return progress == null
-                                      ? child
-                                      : Container(
-                                          width:
-                                              MediaQuery.of(
-                                                context,
-                                              ).size.height *
-                                              0.12,
-                                          height:
-                                              MediaQuery.of(
-                                                context,
-                                              ).size.height *
-                                              0.12,
-                                          color: Colors.grey.shade200,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              value:
-                                                  progress.expectedTotalBytes !=
-                                                      null
-                                                  ? progress.cumulativeBytesLoaded /
-                                                        progress
-                                                            .expectedTotalBytes!
-                                                  : null,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: isLocal
+                                    ? Image.file(
+                                        File(imagePathOrUrl),
+                                        width:
+                                            MediaQuery.of(context).size.height *
+                                            0.15,
+                                        height:
+                                            MediaQuery.of(context).size.height *
+                                            0.15,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) =>
+                                                Container(
+                                                  width:
+                                                      MediaQuery.of(
+                                                        context,
+                                                      ).size.height *
+                                                      0.15,
+                                                  height:
+                                                      MediaQuery.of(
+                                                        context,
+                                                      ).size.height *
+                                                      0.15,
+                                                  color: Colors.grey.shade200,
+                                                  child: Icon(
+                                                    Icons.broken_image,
+                                                    color: Colors.grey,
+                                                  ),
+                                                ),
+                                      )
+                                    : CachedNetworkImage(
+                                        imageUrl: imagePathOrUrl,
+                                        width:
+                                            MediaQuery.of(context).size.height *
+                                            0.15,
+                                        height:
+                                            MediaQuery.of(context).size.height *
+                                            0.15,
+                                        fit: BoxFit.cover,
+                                        placeholder: (context, url) =>
+                                            Container(
+                                              width:
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.height *
+                                                  0.15,
+                                              height:
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.height *
+                                                  0.15,
+                                              color: Colors.grey.shade200,
+                                              child: const Center(
+                                                child:
+                                                    CircularProgressIndicator(),
+                                              ),
                                             ),
-                                          ),
-                                        );
-                                },
+                                        errorWidget: (context, url, error) =>
+                                            Container(
+                                              width:
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.height *
+                                                  0.15,
+                                              height:
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.height *
+                                                  0.15,
+                                              color: Colors.grey.shade200,
+                                              child: Icon(
+                                                Icons.broken_image,
+                                                color: Colors.grey,
+                                                size:
+                                                    MediaQuery.of(
+                                                      context,
+                                                    ).size.width *
+                                                    0.08,
+                                              ),
+                                            ),
+                                      ),
                               ),
                             ),
                           );
@@ -2303,12 +2656,24 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                   SizedBox(height: MediaQuery.of(context).size.height * 0.02),
                   Center(
                     child: ElevatedButton(
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue.shade700,
-                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: MediaQuery.of(context).size.width * 0.1,
+                          vertical: MediaQuery.of(context).size.height * 0.015,
+                        ),
                       ),
-                      child: Text('إغلاق'),
+                      child: Text(
+                        'close_button'.tr(context),
+                        style: TextStyle(
+                          fontSize: MediaQuery.of(context).size.width * 0.045,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -2361,18 +2726,19 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
     final TextEditingController subjectController = TextEditingController();
     DateTime selectedDate = DateTime.now();
     TimeOfDay selectedTime = TimeOfDay.now();
-    String? selectedType = 'زيارة منزلية';
 
-    final List<String> visitTypes = [
-      'زيارة منزلية',
-      'مكالمة هاتفية',
-      'مقابلة خارجية',
-      'متابعة دراسية',
-      'نشاط روحي',
-    ];
+    String? selectedTypeKey = 'home_visit';
 
-    // 🚀 متغيرات محلية للصور
-    List<File> localSelectedImages = [];
+    final Map<String, String> visitTypesMap = {
+      'home_visit': 'home_visit'.tr(context),
+      'phone_call': 'phone_call'.tr(context),
+      'external_meeting': 'external_meeting'.tr(context),
+      'study_follow_up': 'study_follow_up'.tr(context),
+      'spiritual_activity': 'spiritual_activity'.tr(context),
+    };
+
+    // 🚀 Modified for Web Support (Use XFile)
+    List<XFile> localSelectedImages = [];
 
     showDialog(
       context: context,
@@ -2385,8 +2751,8 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
               if (pickedFiles.isNotEmpty) {
                 setDialogState(() {
                   localSelectedImages.addAll(
-                    pickedFiles.map((xfile) => File(xfile.path)),
-                  );
+                    pickedFiles,
+                  ); // 🚀 Store XFiles directly
                 });
               }
             }
@@ -2423,7 +2789,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                       ),
                       child: Center(
                         child: Text(
-                          "إضافة زيارة افتقاد جديدة",
+                          "add_new_visit".tr(context),
                           style: TextStyle(
                             fontSize: MediaQuery.of(context).size.width * 0.045,
                             fontWeight: FontWeight.bold,
@@ -2451,11 +2817,11 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                 ),
                                 child: TextFormField(
                                   controller: titleController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'عنوان الموضوع',
-                                    border: OutlineInputBorder(),
-                                    hintText: 'أدخل عنوان مختصر للزيارة',
-                                    contentPadding: EdgeInsets.symmetric(
+                                  decoration: InputDecoration(
+                                    labelText: 'visit_title_label'.tr(context),
+                                    border: const OutlineInputBorder(),
+                                    hintText: 'visit_title_hint'.tr(context),
+                                    contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 12,
                                       vertical: 16,
                                     ),
@@ -2480,12 +2846,12 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                       MediaQuery.of(context).size.width * 0.8,
                                 ),
                                 child: DropdownButtonFormField<String>(
-                                  initialValue: selectedType,
-                                  items: visitTypes.map((type) {
-                                    return DropdownMenuItem(
-                                      value: type,
+                                  initialValue: selectedTypeKey,
+                                  items: visitTypesMap.entries.map((entry) {
+                                    return DropdownMenuItem<String>(
+                                      value: entry.key,
                                       child: Text(
-                                        type,
+                                        entry.value,
                                         style: TextStyle(
                                           fontSize:
                                               MediaQuery.of(
@@ -2499,13 +2865,13 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                   }).toList(),
                                   onChanged: (value) {
                                     setDialogState(() {
-                                      selectedType = value;
+                                      selectedTypeKey = value;
                                     });
                                   },
-                                  decoration: const InputDecoration(
-                                    labelText: 'نوع الزيارة',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
+                                  decoration: InputDecoration(
+                                    labelText: 'visit_type_label'.tr(context),
+                                    border: const OutlineInputBorder(),
+                                    contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 12,
                                       vertical: 8,
                                     ),
@@ -2532,7 +2898,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            'التاريخ',
+                                            'date_label'.tr(context),
                                             style: TextStyle(
                                               fontSize:
                                                   MediaQuery.of(
@@ -2610,7 +2976,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                                       child: Text(
                                                         DateFormat(
                                                           'yyyy/MM/dd',
-                                                          'ar',
+                                                          Localizations.localeOf(
+                                                            context,
+                                                          ).languageCode,
                                                         ).format(selectedDate),
                                                         style: TextStyle(
                                                           fontSize:
@@ -2643,7 +3011,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            'الوقت',
+                                            'time_label'.tr(context),
                                             style: TextStyle(
                                               fontSize:
                                                   MediaQuery.of(
@@ -2670,27 +3038,25 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                             ),
                                             child: InkWell(
                                               onTap: () async {
-                                                final pickedTime =
-                                                    await showTimePicker(
-                                                      context: context,
-                                                      initialTime: selectedTime,
-                                                      builder:
-                                                          (
-                                                            BuildContext
-                                                            context,
-                                                            Widget? child,
-                                                          ) {
-                                                            return Localizations.override(
-                                                              context: context,
-                                                              locale:
-                                                                  const Locale(
-                                                                    'ar',
-                                                                    'AR',
-                                                                  ),
-                                                              child: child!,
-                                                            );
-                                                          },
-                                                    );
+                                                final pickedTime = await showTimePicker(
+                                                  context: context,
+                                                  initialTime: selectedTime,
+                                                  builder:
+                                                      (
+                                                        BuildContext context,
+                                                        Widget? child,
+                                                      ) {
+                                                        return Localizations.override(
+                                                          context: context,
+                                                          locale: Locale(
+                                                            Localizations.localeOf(
+                                                              context,
+                                                            ).languageCode,
+                                                          ),
+                                                          child: child!,
+                                                        );
+                                                      },
+                                                );
                                                 if (pickedTime != null) {
                                                   setDialogState(() {
                                                     selectedTime = pickedTime;
@@ -2772,11 +3138,13 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                 ),
                                 child: TextFormField(
                                   controller: subjectController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'موضوع الزيارة (تفاصيل)',
-                                    border: OutlineInputBorder(),
-                                    hintText: 'أدخل تفاصيل الزيارة...',
-                                    contentPadding: EdgeInsets.symmetric(
+                                  decoration: InputDecoration(
+                                    labelText: 'visit_subject_label'.tr(
+                                      context,
+                                    ),
+                                    border: const OutlineInputBorder(),
+                                    hintText: 'visit_subject_hint'.tr(context),
+                                    contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 12,
                                       vertical: 16,
                                     ),
@@ -2812,8 +3180,14 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                   ),
                                   label: Text(
                                     localSelectedImages.isEmpty
-                                        ? "إضافة صور للزيارة (اختياري)"
-                                        : "تم اختيار (${localSelectedImages.length}) صور",
+                                        ? 'add_images_optional'.tr(context)
+                                        : 'images_selected'
+                                              .tr(context)
+                                              .replaceFirst(
+                                                '%s',
+                                                localSelectedImages.length
+                                                    .toString(),
+                                              ),
                                     style: TextStyle(
                                       fontSize:
                                           MediaQuery.of(context).size.width *
@@ -2866,20 +3240,39 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                               ClipRRect(
                                                 borderRadius:
                                                     BorderRadius.circular(8),
-                                                child: Image.file(
-                                                  localSelectedImages[index],
-                                                  height:
-                                                      MediaQuery.of(
-                                                        context,
-                                                      ).size.height *
-                                                      0.08,
-                                                  width:
-                                                      MediaQuery.of(
-                                                        context,
-                                                      ).size.height *
-                                                      0.08,
-                                                  fit: BoxFit.cover,
-                                                ),
+                                                child: kIsWeb
+                                                    ? Image.network(
+                                                        localSelectedImages[index]
+                                                            .path,
+                                                        height:
+                                                            MediaQuery.of(
+                                                              context,
+                                                            ).size.height *
+                                                            0.08,
+                                                        width:
+                                                            MediaQuery.of(
+                                                              context,
+                                                            ).size.height *
+                                                            0.08,
+                                                        fit: BoxFit.cover,
+                                                      )
+                                                    : Image.file(
+                                                        File(
+                                                          localSelectedImages[index]
+                                                              .path,
+                                                        ),
+                                                        height:
+                                                            MediaQuery.of(
+                                                              context,
+                                                            ).size.height *
+                                                            0.08,
+                                                        width:
+                                                            MediaQuery.of(
+                                                              context,
+                                                            ).size.height *
+                                                            0.08,
+                                                        fit: BoxFit.cover,
+                                                      ),
                                               ),
                                               Container(
                                                 margin: EdgeInsets.all(3),
@@ -2938,7 +3331,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                               onPressed: () =>
                                   Navigator.of(dialogContext).pop(),
                               child: Text(
-                                'إلغاء',
+                                'cancel_btn'.tr(context),
                                 style: TextStyle(
                                   color: Colors.red.shade700,
                                   fontSize:
@@ -2967,13 +3360,14 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                       if (!await PermissionService.canWrite(
                                         widget.groupId,
                                       )) {
-                                        if (mounted) {
+                                        if (context.mounted) {
                                           ScaffoldMessenger.of(
                                             context,
                                           ).showSnackBar(
-                                            const SnackBar(
+                                            SnackBar(
                                               content: Text(
-                                                "⚠️ انتهت صلاحية الاشتراك",
+                                                'subscription_read_only_warning'
+                                                    .tr(context),
                                               ),
                                             ),
                                           );
@@ -2984,15 +3378,17 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                           subjectController.text
                                               .trim()
                                               .isEmpty ||
-                                          selectedType == null) {
-                                        if (mounted) {
+                                          selectedTypeKey == null) {
+                                        if (context.mounted) {
                                           ScaffoldMessenger.of(
                                             context,
                                           ).showSnackBar(
-                                            const SnackBar(
+                                            SnackBar(
                                               content: Text(
-                                                'الرجاء إدخال عنوان الموضوع وموضوع الزيارة ونوعها',
+                                                'required'.tr(context),
                                               ),
+                                              backgroundColor:
+                                                  Colors.red.shade600,
                                             ),
                                           );
                                         }
@@ -3007,6 +3403,8 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                         );
                                       });
 
+                                      if (!dialogContext.mounted) return;
+
                                       Navigator.of(dialogContext).pop();
 
                                       await _addVisit(
@@ -3014,7 +3412,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                         subject: subjectController.text.trim(),
                                         date: selectedDate,
                                         time: selectedTime,
-                                        type: selectedType!,
+                                        type: selectedTypeKey!,
                                         servantName: widget.servantName,
                                       );
                                     },
@@ -3032,7 +3430,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                                       ),
                                     )
                                   : Text(
-                                      'إضافة الزيارة',
+                                      'add_visit_button'.tr(context),
                                       style: TextStyle(
                                         fontSize:
                                             MediaQuery.of(context).size.width *
@@ -3059,7 +3457,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          "سجل زيارات: ${widget.kid.name}",
+          'visit_records_title'.tr(context).replaceFirst('%s', widget.kid.name),
           style: TextStyle(fontSize: MediaQuery.of(context).size.width * 0.04),
         ),
         backgroundColor: Colors.transparent,
@@ -3087,7 +3485,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                         MediaQuery.of(context).size.width * 0.05,
                       ),
                       child: Text(
-                        'لم يتم اضافة زيارات لـ ${widget.kid.name} بعد.',
+                        'no_visits_added_yet'
+                            .tr(context)
+                            .replaceFirst('%s', widget.kid.name),
                         style: TextStyle(
                           color: Colors.grey.shade600,
                           fontSize: MediaQuery.of(context).size.width * 0.04,
@@ -3103,7 +3503,8 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                     itemCount: _visits.length,
                     itemBuilder: (context, index) {
                       final visitDoc = _visits[index];
-                      final visitData = visitDoc.data;
+                      // 🚀 Unbox offline payload format if needed
+                      final visitData = _getActualData(visitDoc.data);
                       final visitId = visitDoc.$id;
                       final List<String> imageUrls = List<String>.from(
                         visitData['imageUrls'] ?? [],
@@ -3113,7 +3514,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                       final displayTitle =
                           visitData['visitTitle'] ??
                           visitData['subject'] ??
-                          'لا يوجد موضوع';
+                          'no_subject_available'.tr(context);
 
                       final timestampStr = visitData['timestamp'];
                       final date = timestampStr != null
@@ -3123,8 +3524,12 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                       return _buildVisitTile(
                         visitId,
                         displayTitle,
-                        visitData['visitType'] ?? 'زيارة',
-                        visitData['servantName'] ?? 'خادم غير معروف',
+                        _getLocalizedType(
+                          visitData['visitType'] ?? 'visit_type_default',
+                          context,
+                        ),
+                        visitData['servantName'] ??
+                            'unknown_servant'.tr(context),
                         date,
                         visitData,
                         imageUrls,
@@ -3142,7 +3547,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 size: MediaQuery.of(context).size.width * 0.06,
               ),
               label: Text(
-                'إضافة زيارة',
+                'add_new_visit'.tr(context),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.04,
                 ),
@@ -3153,10 +3558,8 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
           : FloatingActionButton.extended(
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      "⚠️ لا يمكن إضافة زيارة: انتهت صلاحية الاشتراك",
-                    ),
+                  SnackBar(
+                    content: Text('cannot_add_visit_unsubscribed'.tr(context)),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -3166,7 +3569,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 size: MediaQuery.of(context).size.width * 0.06,
               ),
               label: Text(
-                'الاشتراك منتهي',
+                'subscription_expired_or_offline'.tr(context),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.04,
                 ),
@@ -3195,15 +3598,54 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            widget.kid.name,
-            style: TextStyle(
-              fontSize: MediaQuery.of(context).size.width * 0.05,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue.shade900,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              if (widget.kid.photoUrl != null &&
+                  widget.kid.photoUrl!.isNotEmpty) ...[
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FullScreenImage(
+                          imageUrl: widget.kid.photoUrl!,
+                          tag: widget.kid.photoUrl!,
+                        ),
+                      ),
+                    );
+                  },
+                  child: CircleAvatar(
+                    radius: MediaQuery.of(context).size.width * 0.07,
+                    backgroundImage: CachedNetworkImageProvider(
+                      widget.kid.photoUrl!,
+                    ),
+                  ),
+                ),
+              ] else ...[
+                CircleAvatar(
+                  radius: MediaQuery.of(context).size.width * 0.07,
+                  backgroundColor: Colors.blue.shade100,
+                  child: Icon(
+                    Icons.person,
+                    size: MediaQuery.of(context).size.width * 0.08,
+                    color: Colors.blue.shade700,
+                  ),
+                ),
+              ],
+              SizedBox(width: MediaQuery.of(context).size.width * 0.04),
+              Expanded(
+                child: Text(
+                  widget.kid.name,
+                  style: TextStyle(
+                    fontSize: MediaQuery.of(context).size.width * 0.05,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade900,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
           Divider(
             height: MediaQuery.of(context).size.height * 0.01,
@@ -3218,7 +3660,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
               ),
               SizedBox(width: MediaQuery.of(context).size.width * 0.02),
               Text(
-                'الفصل: ${widget.kid.grade}',
+                'grade_label_prefix'
+                    .tr(context)
+                    .replaceFirst('%s', widget.kid.grade ?? ''),
                 style: TextStyle(
                   fontSize: MediaQuery.of(context).size.width * 0.038,
                   color: Colors.grey.shade700,
@@ -3247,7 +3691,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                         widget.kid.address,
                       ),
                       child: Text(
-                        'العنوان: ${widget.kid.address}',
+                        'address_label_prefix'
+                            .tr(context)
+                            .replaceFirst('%s', widget.kid.address),
                         style: TextStyle(
                           fontSize: MediaQuery.of(context).size.width * 0.038,
                           color:
@@ -3279,7 +3725,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
           if (widget.kid.phones.isNotEmpty) ...[
             SizedBox(height: MediaQuery.of(context).size.height * 0.008),
             Text(
-              'أرقام الهاتف:',
+              'phone_numbers_label'.tr(context),
               style: TextStyle(
                 fontSize: MediaQuery.of(context).size.width * 0.04,
                 fontWeight: FontWeight.bold,
@@ -3289,7 +3735,10 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
             SizedBox(height: MediaQuery.of(context).size.height * 0.008),
             Column(
               children: widget.kid.phones.map((phone) {
-                final phoneWithOwner = widget.kid.getPhoneWithOwner(phone);
+                final phoneWithOwner = widget.kid.getPhoneWithOwner(
+                  context,
+                  phone,
+                );
                 return Container(
                   width: double.infinity,
                   margin: EdgeInsets.only(
@@ -3344,7 +3793,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                   ),
                   SizedBox(width: MediaQuery.of(context).size.width * 0.02),
                   Text(
-                    'لا توجد أرقام هاتف مسجلة',
+                    'no_phone_numbers_registered'.tr(context),
                     style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: MediaQuery.of(context).size.width * 0.035,
@@ -3393,7 +3842,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
               horizontal: MediaQuery.of(context).size.width * 0.04,
             ),
             leading: Icon(
-              type.contains('مكالمة') ? Icons.call_made : Icons.home_filled,
+              (type.contains('مكالمة') || type.contains('Phone Call'))
+                  ? Icons.call_made
+                  : Icons.home_filled,
               color: Colors.blue.shade700,
               size: MediaQuery.of(context).size.width * 0.07,
             ),
@@ -3414,7 +3865,7 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'النوع: $type',
+                    'visit_type_format'.tr(context).replaceFirst('%s', type),
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width * 0.033,
                       color: Colors.grey.shade600,
@@ -3424,7 +3875,9 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                   ),
                   SizedBox(height: MediaQuery.of(context).size.height * 0.002),
                   Text(
-                    'الخادم: $servant',
+                    'servant_name_format'
+                        .tr(context)
+                        .replaceFirst('%s', servant),
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width * 0.033,
                       color: Colors.orange.shade700,
@@ -3435,7 +3888,15 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                   ),
                   SizedBox(height: MediaQuery.of(context).size.height * 0.002),
                   Text(
-                    'التاريخ: ${DateFormat('yyyy/MM/dd - hh:mm a', 'ar').format(date)}',
+                    'visit_date_format'
+                        .tr(context)
+                        .replaceFirst(
+                          '%s',
+                          DateFormat(
+                            'yyyy/MM/dd - hh:mm a',
+                            Localizations.localeOf(context).languageCode,
+                          ).format(date),
+                        ),
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width * 0.033,
                       color: Colors.grey.shade600,
@@ -3445,12 +3906,15 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                   ),
 
                   // 🚀 عرض مصغرات الصور إذا كانت موجودة
-                  if (hasImages) ...[
+                  if (hasImages ||
+                      (visitData['localImagePaths'] != null &&
+                          (visitData['localImagePaths'] as List)
+                              .isNotEmpty)) ...[
                     SizedBox(
                       height: MediaQuery.of(context).size.height * 0.008,
                     ),
                     Text(
-                      'الصور المرفقة:',
+                      'attached_images_label'.tr(context),
                       style: TextStyle(
                         fontSize: MediaQuery.of(context).size.width * 0.032,
                         fontWeight: FontWeight.bold,
@@ -3464,69 +3928,81 @@ class _KidVisitTrackerState extends State<KidVisitTracker> {
                       height: MediaQuery.of(context).size.height * 0.08,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
-                        itemCount: imageUrls.length,
+                        itemCount: imageUrls.isNotEmpty
+                            ? imageUrls.length
+                            : (visitData['localImagePaths'] as List).length,
                         itemBuilder: (context, index) {
+                          final isLocal = imageUrls.isEmpty;
+                          final imagePathOrUrl = isLocal
+                              ? visitData['localImagePaths'][index]
+                              : imageUrls[index];
+
                           return GestureDetector(
-                            onTap: () => _showImageGallery(imageUrls, index),
+                            onTap: () {
+                              if (!isLocal) {
+                                _showImageGallery(imageUrls, index);
+                              }
+                            },
                             child: Container(
                               margin: EdgeInsets.only(
                                 right: MediaQuery.of(context).size.width * 0.02,
                               ),
-                              child: Image.network(
-                                imageUrls[index],
-                                width:
-                                    MediaQuery.of(context).size.height * 0.08,
-                                height:
-                                    MediaQuery.of(context).size.height * 0.08,
-                                fit: BoxFit.cover,
-                                loadingBuilder: (context, child, progress) {
-                                  return progress == null
-                                      ? child
-                                      : Container(
-                                          width:
-                                              MediaQuery.of(
-                                                context,
-                                              ).size.height *
-                                              0.08,
-                                          height:
-                                              MediaQuery.of(
-                                                context,
-                                              ).size.height *
-                                              0.08,
-                                          color: Colors.grey.shade200,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              value:
-                                                  progress.expectedTotalBytes !=
-                                                      null
-                                                  ? progress.cumulativeBytesLoaded /
-                                                        progress
-                                                            .expectedTotalBytes!
-                                                  : null,
+                              child: isLocal
+                                  ? Image.file(
+                                      File(imagePathOrUrl),
+                                      width:
+                                          MediaQuery.of(context).size.height *
+                                          0.08,
+                                      height:
+                                          MediaQuery.of(context).size.height *
+                                          0.08,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : CachedNetworkImage(
+                                      imageUrl: imagePathOrUrl,
+                                      width:
+                                          MediaQuery.of(context).size.height *
+                                          0.08,
+                                      height:
+                                          MediaQuery.of(context).size.height *
+                                          0.08,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) => Container(
+                                        width:
+                                            MediaQuery.of(context).size.height *
+                                            0.08,
+                                        height:
+                                            MediaQuery.of(context).size.height *
+                                            0.08,
+                                        color: Colors.grey.shade200,
+                                        child: const Center(
+                                          child: CircularProgressIndicator(),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) =>
+                                          Container(
+                                            width:
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.height *
+                                                0.08,
+                                            height:
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.height *
+                                                0.08,
+                                            color: Colors.grey.shade200,
+                                            child: Icon(
+                                              Icons.broken_image,
+                                              color: Colors.grey,
+                                              size:
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.width *
+                                                  0.06,
                                             ),
                                           ),
-                                        );
-                                },
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    width:
-                                        MediaQuery.of(context).size.height *
-                                        0.08,
-                                    height:
-                                        MediaQuery.of(context).size.height *
-                                        0.08,
-                                    color: Colors.grey.shade200,
-                                    child: Icon(
-                                      Icons.broken_image,
-                                      color: Colors.grey,
-                                      size:
-                                          MediaQuery.of(context).size.width *
-                                          0.06,
                                     ),
-                                  );
-                                },
-                              ),
                             ),
                           );
                         },

@@ -8,6 +8,7 @@ import '../services/subscription_service.dart';
 import 'dart:async';
 import 'package:appwrite/models.dart' as models;
 import '../services/data_cache_service.dart'; // 🚀 Added Cache Service
+import '../l10n/app_translations.dart';
 
 class SubscriptionPage extends StatefulWidget {
   final String groupId;
@@ -41,7 +42,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
   String _price6m = "349 ج.م";
   String _price1y = "599 ج.م";
 
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   StreamSubscription? _priceSubscription;
 
   @override
@@ -198,25 +199,25 @@ class _SubscriptionPageState extends State<SubscriptionPage>
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text(
-            "تعديل أسعار الاشتراكات",
+          title: Text(
+            'edit_subscription_prices'.tr(context),
             textAlign: TextAlign.right,
           ),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildPriceField(p1m, "سعر شهر واحد"),
-                _buildPriceField(p3m, "سعر 3 شهور"),
-                _buildPriceField(p6m, "سعر 6 شهور"),
-                _buildPriceField(p1y, "سعر سنة كاملة"),
+                _buildPriceField(p1m, 'price_1_month'.tr(context)),
+                _buildPriceField(p3m, 'price_3_months'.tr(context)),
+                _buildPriceField(p6m, 'price_6_months'.tr(context)),
+                _buildPriceField(p1y, 'price_1_year'.tr(context)),
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("إلغاء"),
+              child: Text('cancel_btn'.tr(context)),
             ),
             if (isSaving)
               const CircularProgressIndicator()
@@ -251,7 +252,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                     if (context.mounted) {
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("تم تحديث الأسعار بنجاح")),
+                        SnackBar(
+                          content: Text('prices_updated_success'.tr(context)),
+                        ),
                       );
                     }
                   } catch (e) {
@@ -260,14 +263,16 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                            "خطأ: تأكد من وجود الـ Collection في Appwrite باسم 'app_config' ومنح الصلاحيات اللازمة للـ Documents.\n$e",
+                            'error_updating_prices'
+                                .tr(context)
+                                .replaceFirst('%s', e.toString()),
                           ),
                         ),
                       );
                     }
                   }
                 },
-                child: const Text("حفظ التغييرات"),
+                child: Text('save_changes_btn'.tr(context)),
               ),
           ],
         ),
@@ -283,7 +288,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
         textAlign: TextAlign.right,
         decoration: InputDecoration(
           labelText: label,
-          hintText: "مثال: 75 ج.م",
+          hintText: 'price_hint'.tr(context),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         ),
       ),
@@ -291,14 +296,17 @@ class _SubscriptionPageState extends State<SubscriptionPage>
   }
 
   Future<void> _launchWhatsApp() async {
+    final String msg = 'whatsapp_subscription_msg'
+        .tr(context)
+        .replaceFirst('%s', _groupEmail);
     final Uri url = Uri.parse(
-      "https://wa.me/$_whatsappNumber?text=${Uri.encodeComponent('مرحباً، أريد الاشتراك في تطبيق خدمتي. مرفق صورة التحويل.\n\nبريد المجموعة: $_groupEmail')}",
+      "https://wa.me/$_whatsappNumber?text=${Uri.encodeComponent(msg)}",
     );
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("تعذر فتح واتساب")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('cannot_open_whatsapp'.tr(context))),
+        );
       }
     }
   }
@@ -308,7 +316,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     if (mounted) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("تم نسخ الرقم")));
+      ).showSnackBar(SnackBar(content: Text('number_copied'.tr(context))));
     }
   }
 
@@ -394,7 +402,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text("الاشتراكات"),
+        title: Text('subscriptions_title'.tr(context)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
@@ -407,7 +415,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                 return IconButton(
                   icon: const Icon(Icons.edit_calendar_rounded),
                   onPressed: _showPriceEditDialog,
-                  tooltip: "تعديل الأسعار",
+                  tooltip: 'edit_prices_tooltip'.tr(context),
                 );
               }
               return const SizedBox.shrink();
@@ -421,25 +429,42 @@ class _SubscriptionPageState extends State<SubscriptionPage>
           _isLoading
               ? const Center(child: CircularProgressIndicator())
               : SafeArea(
-                  child: SingleChildScrollView(
+                  child: RefreshIndicator(
+                    onRefresh: () async {
+                      await _loadStatus();
+                      await _loadPrices();
+                    },
+                    child: SingleChildScrollView(
                     padding: const EdgeInsets.all(20),
                     child: Column(
                       children: [
                         _buildStatusCard(),
                         const SizedBox(height: 20),
-                        const Text(
-                          "خطط الاشتراك",
-                          style: TextStyle(
+                        Text(
+                          'subscription_plans'.tr(context),
+                          style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                           ),
                         ),
                         const SizedBox(height: 10),
-                        _buildPlanCard("1 شهر", _price1m),
-                        _buildPlanCard("3 شهور", _price3m),
-                        _buildPlanCard("6 شهور", _price6m),
-                        _buildPlanCard("1 سنة", _price1y),
+                        _buildPlanCard(
+                          'one_month_duration'.tr(context),
+                          _price1m,
+                        ),
+                        _buildPlanCard(
+                          'three_months_duration'.tr(context),
+                          _price3m,
+                        ),
+                        _buildPlanCard(
+                          'six_months_duration'.tr(context),
+                          _price6m,
+                        ),
+                        _buildPlanCard(
+                          'one_year_duration'.tr(context),
+                          _price1y,
+                        ),
                         const SizedBox(height: 20),
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -457,10 +482,10 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                                 color: Colors.white,
                               ),
                               const SizedBox(width: 10),
-                              const Expanded(
+                              Expanded(
                                 child: Text(
-                                  "ملحوظة: قيمة الاشتراك للمجموعة كاملة بكل مستخدميها وليست لكل خادم بمفرده. هذا المبلغ رمزي ويستخدم لتغطية تكاليف الخدمات السحابية (مثل السيرفرات والتخزين) لضمان استمرار التطبيق بكفاءة.",
-                                  style: TextStyle(
+                                  'subscription_note'.tr(context),
+                                  style: const TextStyle(
                                     fontSize: 14,
                                     color: Colors.white,
                                   ),
@@ -470,9 +495,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                           ),
                         ),
                         const SizedBox(height: 30),
-                        const Text(
-                          "طرق الدفع",
-                          style: TextStyle(
+                        Text(
+                          'payment_methods'.tr(context),
+                          style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
@@ -485,7 +510,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                         ElevatedButton.icon(
                           onPressed: _launchWhatsApp,
                           icon: const Icon(Icons.chat),
-                          label: const Text("إرسال صورة التحويل عبر واتساب"),
+                          label: Text('send_transfer_whatsapp'.tr(context)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green,
                             foregroundColor: Colors.white,
@@ -500,6 +525,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                     ),
                   ),
                 ),
+              ),
         ],
       ),
     );
@@ -546,7 +572,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "حالة الاشتراك",
+                    'subscription_status'.tr(context),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -555,7 +581,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    "المتبقي: $_daysRemaining يوم",
+                    'remaining_days'
+                        .tr(context)
+                        .replaceFirst('%s', '$_daysRemaining'),
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,

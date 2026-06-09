@@ -9,6 +9,8 @@ import 'dart:async';
 import '../services/appwrite_service.dart';
 import '../services/permission_service.dart';
 import '../services/team_service.dart';
+import 'referrals_page.dart';
+import '../l10n/app_translations.dart';
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -21,7 +23,7 @@ class _AdminPageState extends State<AdminPage>
     with SingleTickerProviderStateMixin {
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   static const String databaseId = AppwriteService.databaseId;
   static const String usersCollectionId = 'users_info';
@@ -303,19 +305,23 @@ class _AdminPageState extends State<AdminPage>
   }
 
   Future<void> _copyCode() async {
-    if (_currentJoinCode == '...') return;
+    if (_currentJoinCode == '...') {
+      return;
+    }
     await Clipboard.setData(ClipboardData(text: _currentJoinCode));
-    _showSnackBar("📋 تم نسخ الكود إلى الحافظة", Colors.blueAccent);
+    if (!mounted) {
+      return;
+    }
+    _showSnackBar('copied_to_clipboard'.tr(context), Colors.blueAccent);
   }
 
   Future<void> _resetJoinCode() async {
-    if (_myGroupId.isEmpty) return;
+    if (_myGroupId.isEmpty) {
+      return;
+    }
 
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
 
@@ -337,7 +343,9 @@ class _AdminPageState extends State<AdminPage>
           collectionId: groupsCollectionId,
           queries: [Query.equal('joinCode', newCode)],
         );
-        if (query.documents.isEmpty) isUnique = true;
+        if (query.documents.isEmpty) {
+          isUnique = true;
+        }
       }
 
       await _databases.updateDocument(
@@ -347,22 +355,32 @@ class _AdminPageState extends State<AdminPage>
         data: {'joinCode': newCode},
       );
 
+      if (!mounted) {
+        return;
+      }
       setState(() => _currentJoinCode = newCode);
-      _showSnackBar("✨ تم تغيير كود المجموعة بنجاح", Colors.green);
+      _showSnackBar('code_changed_success'.tr(context), Colors.green);
     } catch (e) {
-      _showSnackBar("❌ فشل تغيير الكود: $e", Colors.red);
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar('code_change_failed'.tr(context), Colors.red);
     } finally {
       setState(() => _isResetting = false);
     }
   }
 
   String _formatRoleForDisplay(String role) {
-    if (role == 'admin') return 'أمين الخدمة (Admin)';
-    if (role == 'general_supervisor') return 'مشرف عام';
-    if (role == 'user') return 'خادم (User)';
+    if (role == 'admin') return 'admin_role'.tr(context);
+    if (role == 'general_supervisor') {
+      return 'general_supervisor_role'.tr(context);
+    }
+    if (role == 'user') {
+      return 'user_role'.tr(context);
+    }
     if (role.startsWith('class_supervisor_grade_')) {
       final grade = role.replaceFirst('class_supervisor_grade_', '');
-      return 'مشرف فصل $grade';
+      return 'class_supervisor_format'.tr(context).replaceFirst('%s', grade);
     }
     return role;
   }
@@ -389,10 +407,7 @@ class _AdminPageState extends State<AdminPage>
     String newRole,
   ) async {
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
     try {
@@ -423,19 +438,21 @@ class _AdminPageState extends State<AdminPage>
         debugPrint("Silent error syncing role to users_info: $e");
       }
 
-      _showSnackBar("✅ تم تحديث الدور بنجاح", Colors.blue);
+      if (!mounted) return;
+      _showSnackBar('role_updated'.tr(context), Colors.blue);
     } catch (e) {
-      _showSnackBar("❌ خطأ: $e", Colors.red);
+      if (!mounted) return;
+      _showSnackBar(
+        'error_occurred'.tr(context).replaceFirst('%s', '$e'),
+        Colors.red,
+      );
     }
   }
 
   // 🚀 Approval Methods
   Future<void> _approveUser(String membershipId, String userId) async {
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
     try {
@@ -452,18 +469,20 @@ class _AdminPageState extends State<AdminPage>
         await TeamService().addMember(_teamId, userId);
       }
 
-      _showSnackBar("✅ تم قبول العضو بنجاح", Colors.green);
+      if (!mounted) return;
+      _showSnackBar('member_accepted'.tr(context), Colors.green);
     } catch (e) {
-      _showSnackBar("❌ خطأ في الموافقة: $e", Colors.red);
+      if (!mounted) return;
+      _showSnackBar(
+        'error_occurred'.tr(context).replaceFirst('%s', '$e'),
+        Colors.red,
+      );
     }
   }
 
   Future<void> _rejectUser(String membershipId) async {
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
     try {
@@ -472,9 +491,14 @@ class _AdminPageState extends State<AdminPage>
         collectionId: AppwriteService.membershipsCollectionId,
         documentId: membershipId,
       );
-      _showSnackBar("🗑️ تم رفض وطلب العضو", Colors.orange);
+      if (!mounted) return;
+      _showSnackBar('member_rejected'.tr(context), Colors.orange);
     } catch (e) {
-      _showSnackBar("❌ خطأ: $e", Colors.red);
+      if (!mounted) return;
+      _showSnackBar(
+        'error_occurred'.tr(context).replaceFirst('%s', e.toString()),
+        Colors.red,
+      );
     }
   }
 
@@ -484,10 +508,7 @@ class _AdminPageState extends State<AdminPage>
     String username,
   ) async {
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
     if (!mounted) return;
@@ -495,20 +516,20 @@ class _AdminPageState extends State<AdminPage>
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("تأكيد الحذف", textAlign: TextAlign.right),
+        title: Text('confirm_deletion'.tr(context), textAlign: TextAlign.right),
         content: Text(
-          "هل تريد حذف '$username' من المجموعة؟",
+          'delete_user_confirm'.tr(context).replaceFirst('%s', username),
           textAlign: TextAlign.right,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text("إلغاء"),
+            child: Text('cancel'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: const Text("حذف"),
+            child: Text('delete'.tr(context)),
           ),
         ],
       ),
@@ -537,36 +558,45 @@ class _AdminPageState extends State<AdminPage>
           debugPrint("Silent error clearing groupId for $userId: $e");
         }
 
-        _showSnackBar("🗑️ تم حذف المستخدم بنجاح", Colors.orange);
+        if (!mounted) return;
+        _showSnackBar('user_deleted_success'.tr(context), Colors.orange);
       } catch (e) {
-        _showSnackBar("❌ خطأ: $e", Colors.red);
+        if (!mounted) return;
+        _showSnackBar(
+          'error_occurred'.tr(context).replaceFirst('%s', e.toString()),
+          Colors.red,
+        );
       }
     }
   }
 
   Future<void> _deleteAllSystemData(String password) async {
     if (!_canWrite) {
-      _showSnackBar(
-        "⚠️ الخدمة غير متاحة (تحقق من الاشتراك والإنترنت)",
-        Colors.red,
-      );
+      _showSnackBar('service_unavailable'.tr(context), Colors.red);
       return;
     }
     try {
-      // Verify Password by trying to create a session (ignoring result)
-      await _account.get();
-      // Verify Password (conceptually) - kept for structure but removed dead check
-      // if (user.email == null) throw Exception("User has no email");
-
-      // WARNING: Creating a session might invalidate current one if limits reached,
-      // but for re-auth purposes we can try content check.
-      // Appwrite doesn't support re-auth easily.
-      // We'll trust the process if they are already admin and logged in.
-      // Or better: Assume if they are here, they are admin.
-      // For extra security in Appwrite we usually use a Function.
-      // For now, we will proceed without re-auth OR update to just verify boolean.
-
-      // Let's rely on the fact they are logged in as Admin.
+      // التحقق الفعلي من كلمة المرور عبر إعادة تسجيل الدخول
+      try {
+        await _account.deleteSession(sessionId: 'current');
+        await _account.createEmailPasswordSession(
+          email: _currentUserEmail,
+          password: password,
+        );
+      } on AppwriteException catch (_) {
+        if (mounted) {
+          _showSnackBar('password_incorrect'.tr(context), Colors.red);
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil('/login', (route) => false);
+        }
+        return;
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar('password_check_error'.tr(context), Colors.red);
+        }
+        return;
+      }
 
       final subcollections = [
         'grades',
@@ -613,6 +643,14 @@ class _AdminPageState extends State<AdminPage>
           }
         } catch (e) {
           debugPrint("Skipping col $col: $e");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${'error_fixing_collections'.tr(context)}: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       }
 
@@ -697,15 +735,18 @@ class _AdminPageState extends State<AdminPage>
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.warning_amber_rounded,
                     color: Colors.red,
                     size: 30,
                   ),
-                  SizedBox(width: 10),
-                  Text("تحذير خطير", style: TextStyle(color: Colors.red)),
+                  const SizedBox(width: 10),
+                  Text(
+                    'serious_warning'.tr(context),
+                    style: const TextStyle(color: Colors.red),
+                  ),
                 ],
               ),
               content: SingleChildScrollView(
@@ -713,23 +754,21 @@ class _AdminPageState extends State<AdminPage>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      "أنت على وشك حذف جميع بيانات النظام! \n\nهذا الإجراء لا يمكن التراجع عنه.",
-                      style: TextStyle(
+                    Text(
+                      'delete_system_warning'.tr(context),
+                      style: const TextStyle(
                         fontSize: 14,
                         height: 1.5,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
-                      "للتأكيد، يرجى إدخال كلمة المرور (للتأكيد الشكلي):",
-                    ),
+                    Text('enter_password_confirm'.tr(context)),
                     TextField(
                       controller: passwordController,
                       obscureText: true,
                       decoration: InputDecoration(
-                        labelText: "كلمة المرور",
+                        labelText: 'password_required'.tr(context),
                         errorText: errorText,
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.lock),
@@ -744,7 +783,7 @@ class _AdminPageState extends State<AdminPage>
                 else ...[
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text("إلغاء"),
+                    child: Text('cancel'.tr(context)),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
@@ -752,7 +791,9 @@ class _AdminPageState extends State<AdminPage>
                     ),
                     onPressed: () async {
                       if (passwordController.text.isEmpty) {
-                        setState(() => errorText = "مطلوب كلمة المرور");
+                        setState(
+                          () => errorText = 'password_required'.tr(context),
+                        );
                         return;
                       }
                       setState(() {
@@ -763,7 +804,7 @@ class _AdminPageState extends State<AdminPage>
                       // effectively trusting the active admin session.
                       await _deleteAllSystemData(passwordController.text);
                     },
-                    child: const Text("حذف النظام بالكامل"),
+                    child: Text('delete_system_confirm'.tr(context)),
                   ),
                 ],
               ],
@@ -782,18 +823,18 @@ class _AdminPageState extends State<AdminPage>
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              "لوحة التحكم",
-              style: TextStyle(
+            Text(
+              'control_panel'.tr(context),
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
                 fontSize: 24,
               ),
             ),
             if (!_canWrite)
-              const Text(
-                "(وضع القراءة فقط)",
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+              Text(
+                'read_only_mode'.tr(context),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
           ],
         ),
@@ -814,10 +855,20 @@ class _AdminPageState extends State<AdminPage>
                 size: 30,
               ),
               onPressed: _showDeleteSystemDialog,
-              tooltip: "حذف النظام بالكامل",
+              tooltip: 'delete_entire_system'.tr(context),
             ),
 
           // 🆕 Security Migration Button (Only for Admin)
+          const SizedBox(width: 10),
+          IconButton(
+            icon: const Icon(
+              Icons.help_outline_rounded,
+              color: Colors.white,
+              size: 28,
+            ),
+            onPressed: () => _showRoleDefinitionsDialog(context),
+            tooltip: 'role_definitions'.tr(context),
+          ),
           const SizedBox(width: 10),
         ],
       ),
@@ -828,6 +879,7 @@ class _AdminPageState extends State<AdminPage>
             child: Column(
               children: [
                 _buildJoinCodeSection(),
+                _buildReferralSection(), // Added Referral Button Section
                 if (_pendingUsersMap.isNotEmpty) _buildPendingRequestsSection(),
                 _buildSearchAndUsersSection(),
               ],
@@ -928,9 +980,9 @@ class _AdminPageState extends State<AdminPage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
-                        "كود انضمام أعضاء جدد",
-                        style: TextStyle(
+                      Text(
+                        'join_code_title'.tr(context),
+                        style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
@@ -996,6 +1048,82 @@ class _AdminPageState extends State<AdminPage>
     );
   }
 
+  Widget _buildReferralSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+      child: GestureDetector(
+        onTap: () {
+          if (_myGroupId.isEmpty) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ReferralsPage(groupId: _myGroupId),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFF9800), Color(0xFFFFB74D)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(25),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.orange.withValues(alpha: 0.3),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.card_giftcard,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 15),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'invite_other_service'.tr(context),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      Text(
+                        'get_free_subscription'.tr(context),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white,
+                size: 18,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPendingRequestsSection() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1013,7 +1141,9 @@ class _AdminPageState extends State<AdminPage>
               const Icon(Icons.person_add_alt_1, color: Colors.orange),
               const SizedBox(width: 10),
               Text(
-                "طلبات انضمام جديدة (${_pendingUsersMap.length})",
+                'new_join_requests'
+                    .tr(context)
+                    .replaceFirst('%s', '${_pendingUsersMap.length}'),
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
@@ -1034,7 +1164,7 @@ class _AdminPageState extends State<AdminPage>
               ),
               child: ListTile(
                 title: Text(
-                  data['username'] ?? 'مستخدم جديد',
+                  data['username'] ?? 'new_user'.tr(context),
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(data['email'] ?? ''),
@@ -1044,12 +1174,12 @@ class _AdminPageState extends State<AdminPage>
                     IconButton(
                       icon: const Icon(Icons.check_circle, color: Colors.green),
                       onPressed: () => _approveUser(doc.$id, data['userId']),
-                      tooltip: "قبول",
+                      tooltip: 'accept'.tr(context),
                     ),
                     IconButton(
                       icon: const Icon(Icons.cancel, color: Colors.red),
                       onPressed: () => _rejectUser(doc.$id),
-                      tooltip: "رفض",
+                      tooltip: 'reject'.tr(context),
                     ),
                   ],
                 ),
@@ -1096,7 +1226,7 @@ class _AdminPageState extends State<AdminPage>
                 controller: _searchController,
                 textAlign: TextAlign.right,
                 decoration: InputDecoration(
-                  hintText: "ابحث عن خادم...",
+                  hintText: 'search_servant_hint'.tr(context),
                   hintStyle: TextStyle(
                     color: Colors.grey.shade400,
                     fontSize: 14,
@@ -1126,10 +1256,10 @@ class _AdminPageState extends State<AdminPage>
       return const Center(child: CircularProgressIndicator());
     }
     if (_usersMap.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
-          "لا يوجد أعضاء في المجموعة",
-          style: TextStyle(color: Colors.grey),
+          'no_members_in_group'.tr(context),
+          style: const TextStyle(color: Colors.grey),
         ),
       );
     }
@@ -1141,12 +1271,17 @@ class _AdminPageState extends State<AdminPage>
     }).toList();
 
     if (users.isEmpty) {
-      return const Center(
-        child: Text("لا توجد نتائج", style: TextStyle(color: Colors.grey)),
+      return Center(
+        child: Text(
+          'no_results'.tr(context),
+          style: const TextStyle(color: Colors.grey),
+        ),
       );
     }
 
-    return ListView.builder(
+    return RefreshIndicator(
+      onRefresh: _loadUsers,
+      child: ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       itemCount: users.length,
       itemBuilder: (context, index) {
@@ -1187,7 +1322,7 @@ class _AdminPageState extends State<AdminPage>
               ),
             ),
             title: Text(
-              data['username'] ?? 'مستخدم غير معروف (Ghost)',
+              data['username'] ?? 'unknown_user'.tr(context),
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             subtitle: Column(
@@ -1251,6 +1386,7 @@ class _AdminPageState extends State<AdminPage>
           ),
         );
       },
+    ),
     );
   }
 
@@ -1299,5 +1435,113 @@ class _AdminPageState extends State<AdminPage>
 
   String _getRoleLabel(String role) {
     return _formatRoleForDisplay(role);
+  }
+
+  void _showRoleDefinitionsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.blue, size: 28),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'role_definitions_title'.tr(context),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildRoleDefinitionItem(
+                  icon: Icons.shield_rounded,
+                  color: const Color(0xFFD32F2F),
+                  title: 'admin_role'.tr(context),
+                  description: 'admin_role_desc'.tr(context),
+                ),
+                const Divider(height: 24),
+                _buildRoleDefinitionItem(
+                  icon: Icons.admin_panel_settings_rounded,
+                  color: const Color(0xFF1976D2),
+                  title: 'class_supervisor_format'
+                      .tr(context)
+                      .replaceFirst('%s', ''),
+                  description: 'supervisor_role_desc'.tr(context),
+                ),
+                const Divider(height: 24),
+                _buildRoleDefinitionItem(
+                  icon: Icons.person_rounded,
+                  color: Colors.blueGrey,
+                  title: 'user_role'.tr(context),
+                  description: 'user_role_desc'.tr(context),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'close'.tr(context),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildRoleDefinitionItem({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String description,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: color, size: 24),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title.trim().isEmpty
+                    ? 'supervisor_role_generic'.tr(context)
+                    : title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: color,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: const TextStyle(fontSize: 13, height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

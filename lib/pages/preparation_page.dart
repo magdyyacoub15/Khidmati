@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
@@ -8,7 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart' as printing;
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
@@ -23,6 +24,9 @@ import '../services/image_service.dart';
 import '../services/permission_service.dart';
 import '../services/appwrite_service.dart';
 import '../services/data_cache_service.dart'; // 🚀 Added Cache Service
+import '../services/language_service.dart'; // ✅ Added Language Service
+import '../services/sync_service.dart'; // 🚀 Added Sync Service
+import '../l10n/app_translations.dart'; // ✅ Added Translation Support
 
 // -------------------------------------------------------------------
 // 🧱 PreparationForm
@@ -52,7 +56,8 @@ class _PreparationFormState extends State<PreparationForm> {
 
   List<String> _grades = [];
   String? _selectedGrade;
-  final List<File> _selectedImages = [];
+  // 🚀 Modified for Web Support (Use XFile instead of File)
+  final List<XFile> _selectedImages = [];
   bool _isLoading = false;
 
   final ImageService _imageService = ImageService();
@@ -106,7 +111,10 @@ class _PreparationFormState extends State<PreparationForm> {
     }
   }
 
-  Future<File> compressImage(File file) async {
+  Future<dynamic> compressImage(XFile file) async {
+    // 🚀 Skip compression on Web
+    if (kIsWeb) return file;
+
     final dir = await getTemporaryDirectory();
     final targetPath = path.join(
       dir.path,
@@ -114,7 +122,7 @@ class _PreparationFormState extends State<PreparationForm> {
     );
 
     var result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
+      file.path,
       targetPath,
       quality: 85,
       minWidth: 1280,
@@ -122,7 +130,7 @@ class _PreparationFormState extends State<PreparationForm> {
       format: CompressFormat.jpeg,
     );
 
-    return result != null ? File(result.path) : file;
+    return result ?? file; // Return XFile/File (dynamic handles it in upload)
   }
 
   Future<void> _pickMultiImages() async {
@@ -130,17 +138,22 @@ class _PreparationFormState extends State<PreparationForm> {
     final List<XFile> pickedFiles = await picker.pickMultiImage();
     if (pickedFiles.isNotEmpty) {
       setState(() {
-        _selectedImages.addAll(pickedFiles.map((xfile) => File(xfile.path)));
+        _selectedImages.addAll(pickedFiles); // 🚀 Store XFiles directy
       });
     }
   }
 
   Future<void> _saveLesson() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final String imageUploadFailedMsg = 'image_upload_failed'.tr(context);
+    final String newPreparationMsg = 'new_preparation'.tr(context);
+    final String preparationSourceMsg = 'preparation_source'.tr(context);
+
     if (widget.groupId.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("انتظر تحميل البيانات...")));
+      ).showSnackBar(SnackBar(content: Text('wait_for_data_load'.tr(context))));
       return;
     }
 
@@ -149,9 +162,7 @@ class _PreparationFormState extends State<PreparationForm> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text(
-              "⚠️ الخدمة مجمدة مؤقتاً (راجع الاشتراك أو الإنترنت)",
-            ),
+            content: Text('service_frozen'.tr(context)),
             backgroundColor: Colors.red.shade900,
             behavior: SnackBarBehavior.floating,
           ),
@@ -162,13 +173,53 @@ class _PreparationFormState extends State<PreparationForm> {
 
     setState(() => _isLoading = true);
 
-    List<String> imageLinks = [];
-    List<String> fileIds = [];
+    final String titleStr = _titleController.text.trim();
+    final String dateStr = DateTime.now().toIso8601String();
+
+    final Map<String, dynamic> syncData = {
+      'title': titleStr,
+      'servantName': widget.servantName,
+      'grade': _selectedGrade,
+      'date': dateStr,
+      'groupId': widget.groupId,
+      'teamId': widget.teamId,
+      'localImagePaths': _selectedImages.map((e) => e.path).toList(),
+    };
 
     try {
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'preparation_add',
+          'data': syncData,
+        });
+
+        // Optimistic UI Feedback
+        if (mounted) {
+          _titleController.clear();
+          _selectedImages.clear();
+          setState(
+            () => _selectedGrade = _grades.isNotEmpty ? _grades.first : null,
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('offline_congratulation_queued'.tr(context)),
+              backgroundColor: Colors.blueGrey,
+            ),
+          );
+          widget.onSaved();
+        }
+        return;
+      }
+
+      List<String> imageLinks = [];
+      List<String> fileIds = [];
       if (_selectedImages.isNotEmpty) {
-        for (File imageFile in _selectedImages) {
-          File compressedImage = await compressImage(imageFile);
+        for (XFile imageFile in _selectedImages) {
+          // 🚀 Compress (returns XFile or File, dynamic is fine for uploadImage)
+          final compressedImage = await compressImage(imageFile);
+
           Map<String, String>? uploadResult = await _imageService.uploadImage(
             compressedImage,
           );
@@ -177,7 +228,7 @@ class _PreparationFormState extends State<PreparationForm> {
             imageLinks.add(uploadResult['url']!);
             fileIds.add(uploadResult['id']!);
           } else {
-            throw Exception("فشل رفع الصور");
+            throw Exception(imageUploadFailedMsg);
           }
         }
       }
@@ -187,10 +238,10 @@ class _PreparationFormState extends State<PreparationForm> {
         collectionId: collectionId,
         documentId: ID.unique(),
         data: {
-          'title': _titleController.text.trim(),
+          'title': titleStr,
           'servantName': widget.servantName,
           'grade': _selectedGrade,
-          'date': DateTime.now().toIso8601String(),
+          'date': dateStr,
           'imageUrls': imageLinks,
           'fileIds': fileIds,
           'groupId': widget.groupId,
@@ -209,8 +260,8 @@ class _PreparationFormState extends State<PreparationForm> {
         for (String url in imageLinks) {
           await statusService.addStatus(
             imageUrl: url,
-            caption: "تحضير جديد: ${_titleController.text.trim()}",
-            source: "التحضير",
+            caption: newPreparationMsg.replaceFirst('%s', titleStr),
+            source: preparationSourceMsg,
             teamId: widget.teamId,
             uploaderName: widget.servantName, // 🚀 Pass uploader name
           );
@@ -225,8 +276,8 @@ class _PreparationFormState extends State<PreparationForm> {
         );
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ تم حفظ الدرس بنجاح"),
+          SnackBar(
+            content: Text('lesson_saved_success'.tr(context)),
             backgroundColor: Colors.green,
           ),
         );
@@ -234,10 +285,35 @@ class _PreparationFormState extends State<PreparationForm> {
       }
     } catch (e) {
       debugPrint("❌ Error saving lesson: $e");
+      // Network retry
+      if (e is AppwriteException &&
+          (e.type == 'network_error' ||
+              e.message?.contains('Socket') == true)) {
+        await DataCacheService().addPendingOperation({
+          'type': 'preparation_add',
+          'data': syncData,
+        });
+        if (mounted) {
+          _titleController.clear();
+          _selectedImages.clear();
+          setState(
+            () => _selectedGrade = _grades.isNotEmpty ? _grades.first : null,
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('offline_congratulation_queued'.tr(context)),
+              backgroundColor: Colors.blueGrey,
+            ),
+          );
+          widget.onSaved();
+        }
+        return;
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("❌ حدث خطأ، لم يتم حفظ الموضوع."),
+          SnackBar(
+            content: Text('lesson_saved_error'.tr(context)),
             backgroundColor: Colors.red,
           ),
         );
@@ -272,9 +348,9 @@ class _PreparationFormState extends State<PreparationForm> {
               const SizedBox(height: 20),
               DropdownButtonFormField<String>(
                 key: ValueKey(_selectedGrade),
-                decoration: const InputDecoration(
-                  labelText: 'اختر السنة الدراسية',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: 'select_grade_prep'.tr(context),
+                  border: const OutlineInputBorder(),
                   filled: true,
                   fillColor: Colors.white,
                 ),
@@ -283,18 +359,20 @@ class _PreparationFormState extends State<PreparationForm> {
                     .map((g) => DropdownMenuItem(value: g, child: Text(g)))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedGrade = v),
-                validator: (v) => v == null ? 'الرجاء اختيار السنة' : null,
+                validator: (v) =>
+                    v == null ? 'please_select_grade_prep'.tr(context) : null,
               ),
               const SizedBox(height: 20),
               TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: "عنوان الموضوع",
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: 'subject_title'.tr(context),
+                  border: const OutlineInputBorder(),
                   filled: true,
                   fillColor: Colors.white,
                 ),
-                validator: (v) => v!.isEmpty ? "اكتب عنوان الموضوع" : null,
+                validator: (v) =>
+                    v!.isEmpty ? 'enter_subject_title'.tr(context) : null,
               ),
               const SizedBox(height: 20),
               ElevatedButton.icon(
@@ -302,8 +380,13 @@ class _PreparationFormState extends State<PreparationForm> {
                 icon: const Icon(Icons.photo_library),
                 label: Text(
                   _selectedImages.isEmpty
-                      ? "اختيار صور للموضوع (اختياري)"
-                      : "تم اختيار (${_selectedImages.length}) صور",
+                      ? 'choose_images_optional'.tr(context)
+                      : 'images_selected'
+                            .tr(context)
+                            .replaceFirst(
+                              '%s',
+                              _selectedImages.length.toString(),
+                            ),
                 ),
               ),
 
@@ -319,12 +402,20 @@ class _PreparationFormState extends State<PreparationForm> {
                         padding: const EdgeInsets.only(right: 8.0),
                         child: Stack(
                           children: [
-                            Image.file(
-                              _selectedImages[index],
-                              height: 120,
-                              width: 120,
-                              fit: BoxFit.cover,
-                            ),
+                            kIsWeb
+                                ? Image.network(
+                                    _selectedImages[index]
+                                        .path, // On web XFile.path is a blob URL
+                                    height: 120,
+                                    width: 120,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Image.file(
+                                    File(_selectedImages[index].path),
+                                    height: 120,
+                                    width: 120,
+                                    fit: BoxFit.cover,
+                                  ),
                             Positioned(
                               top: 0,
                               right: 0,
@@ -366,7 +457,11 @@ class _PreparationFormState extends State<PreparationForm> {
                           ),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_isLoading ? "جاري الحفظ..." : "حفظ الموضوع"),
+                  label: Text(
+                    _isLoading
+                        ? 'saving_action'.tr(context)
+                        : 'save_subject_action'.tr(context),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -402,7 +497,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
 
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   RealtimeSubscription? _userSubscription;
 
   static const String databaseId = AppwriteService.databaseId;
@@ -433,65 +528,77 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
   }
 
   Future<void> _loadUserData() async {
-    try {
-      final user = await _account.get();
-      _userSubscription = _realtime.subscribe([
-        'databases.$databaseId.collections.users_info.documents.${user.$id}',
-      ]);
-      _userSubscription!.stream.listen((event) {
-        if (mounted) _fetchUserGroupId(user.$id);
-      });
-      await _fetchUserGroupId(user.$id);
-
-      final name = await UserService().getCurrentUserName();
-      if (mounted) setState(() => _currentServantName = name);
-    } catch (e) {
-      debugPrint("Error loading user: $e");
-    }
-  }
-
-  Future<void> _fetchUserGroupId(String userId) async {
-    // 1. Check Cache
-    final cached = await DataCacheService().getCachedUserGroupId(userId);
-    if (cached != null) {
-      if (mounted) {
-        setState(() {
-          if (cached['groupId'] != _myGroupId) _myGroupId = cached['groupId']!;
-          _isAdmin = (cached['role'] == 'admin');
-        });
-        if (_myGroupId.isNotEmpty) _fetchPreparations();
+    // 🚀 1. Try to load from cache IMMEDIATELY (Non-blocking)
+    final cachedUserId = await UserService().getCachedUserId();
+    if (cachedUserId != null) {
+      final cachedCtx = await DataCacheService().getCachedUserGroupId(
+        cachedUserId,
+      );
+      if (cachedCtx != null) {
+        if (mounted) {
+          setState(() {
+            if (cachedCtx['groupId'] != _myGroupId) {
+              _myGroupId = cachedCtx['groupId']!;
+            }
+            if (cachedCtx['teamId'] != null) {
+              _teamId = cachedCtx['teamId'];
+            }
+            _isAdmin = (cachedCtx['role'] == 'admin');
+          });
+          _canWrite = await PermissionService.canWrite(_myGroupId);
+          if (mounted) {
+            setState(() {
+              int newLength = _canWrite ? 2 : 1;
+              if (_tabController.length != newLength) {
+                _tabController.dispose();
+                _tabController = TabController(length: newLength, vsync: this);
+              }
+            });
+            if (_myGroupId.isNotEmpty) _fetchPreparations();
+          }
+        }
       }
     }
 
+    // 🚀 2. Background Network Refresh (Silent)
     try {
+      final name = await UserService().getCurrentUserName();
+      if (mounted) setState(() => _currentServantName = name);
+
+      final user = await _account.get();
+      final userId = user.$id;
+
       final doc = await _databases.getDocument(
         databaseId: databaseId,
         collectionId: 'users_info',
         documentId: userId,
       );
+
       final gid = doc.data['groupId'] ?? '';
       final role = doc.data['role'] ?? '';
+      final currentTeamId = doc.data['teamId'] as String?;
 
-      // Update Cache
       await DataCacheService().cacheUserGroupId(
         userId,
         gid,
-        doc.data['teamId'],
+        currentTeamId,
         role,
       );
 
       if (mounted) {
         setState(() {
-          if (gid != _myGroupId) _myGroupId = gid;
-          if (doc.data['teamId'] != null) {
-            _teamId = doc.data['teamId'] as String;
+          if (gid != _myGroupId) {
+            _myGroupId = gid;
+          }
+          if (currentTeamId != null) {
+            _teamId = currentTeamId;
           }
           _isAdmin = (role == 'admin');
         });
+
         _canWrite = await PermissionService.canWrite(_myGroupId);
         if (mounted) {
           setState(() {
-            // Update TabController length if needed
             int newLength = _canWrite ? 2 : 1;
             if (_tabController.length != newLength) {
               _tabController.dispose();
@@ -501,8 +608,48 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
           if (_myGroupId.isNotEmpty) _fetchPreparations();
         }
       }
+
+      _userSubscription?.close();
+      _userSubscription = _realtime.subscribe([
+        'databases.$databaseId.collections.users_info.documents.$userId',
+      ]);
+
+      _userSubscription!.stream.listen((event) {
+        if (mounted) {
+          final payloadGid = event.payload['groupId'] ?? '';
+          final payloadRole = event.payload['role'] ?? '';
+          final payloadTeamId = event.payload['teamId'] as String?;
+
+          setState(() {
+            if (payloadGid != _myGroupId) {
+              _myGroupId = payloadGid;
+            }
+            if (payloadTeamId != null) {
+              _teamId = payloadTeamId;
+            }
+            _isAdmin = (payloadRole == 'admin');
+          });
+
+          PermissionService.canWrite(_myGroupId).then((can) {
+            if (mounted) {
+              setState(() {
+                _canWrite = can;
+                int newLength = _canWrite ? 2 : 1;
+                if (_tabController.length != newLength) {
+                  _tabController.dispose();
+                  _tabController = TabController(
+                    length: newLength,
+                    vsync: this,
+                  );
+                }
+              });
+              if (_myGroupId.isNotEmpty) _fetchPreparations();
+            }
+          });
+        }
+      });
     } catch (e) {
-      debugPrint("Error fetching group id: $e");
+      debugPrint("Offline mode active or error loading user: $e");
     }
   }
 
@@ -567,7 +714,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("⚠️ لا تملك صلاحية")));
+        ).showSnackBar(SnackBar(content: Text('no_permission'.tr(context))));
       }
       return;
     }
@@ -576,16 +723,19 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("تأكيد الحذف"),
-        content: const Text("هل أنت متأكد من حذف هذا الموضوع؟"),
+        title: Text('delete_confirmation_title'.tr(context)),
+        content: Text('delete_preparation_warning'.tr(context)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("حذف", style: TextStyle(color: Colors.red)),
+            child: Text(
+              'delete_btn'.tr(context),
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -593,7 +743,35 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
 
     if (confirm != true) return;
 
+    final syncData = {
+      'docId': docId,
+      'groupId': _myGroupId,
+      'fileIds': fileIds,
+      'imageUrls': imageUrls,
+    };
+
     try {
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'preparation_delete',
+          'data': syncData,
+        });
+
+        // Optimistic UI Update
+        await DataCacheService().removePreparationFromCache(_myGroupId, docId);
+        if (mounted) {
+          setState(() {
+            _preparations.removeWhere((doc) => doc.$id == docId);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('deleted_success'.tr(context))),
+          );
+        }
+        return;
+      }
+
       // Delete Images
       final storage = AppwriteService().storage;
       for (var id in fileIds) {
@@ -620,19 +798,55 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("✅ تم الحذف")));
+        ).showSnackBar(SnackBar(content: Text('deleted_success'.tr(context))));
         _fetchPreparations(); // Refresh list
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في الحذف: $e")));
+        // Appwrite error: Network?
+        if (e is AppwriteException &&
+            (e.type == 'network_error' ||
+                e.message?.contains('Socket') == true)) {
+          await DataCacheService().addPendingOperation({
+            'type': 'preparation_delete', // Changed from meeting_delete
+            'data': syncData,
+          });
+          if (!mounted) return; // Added mounted check
+          await DataCacheService().removePreparationFromCache(
+            // Changed from removeMeetingFromCache
+            _myGroupId,
+            docId,
+          );
+          if (!mounted) return;
+          setState(() {
+            _preparations.removeWhere(
+              (doc) => doc.$id == docId,
+            ); // Changed from _meetings
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('deleted_success'.tr(context))),
+          );
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'delete_failed'
+                  .tr(context)
+                  .replaceFirst(
+                    '%s',
+                    e.toString(),
+                  ), // Changed from error_occurred
+            ),
+          ),
+        );
       }
     }
   }
 
   Future<void> _exportToPdf(
+    BuildContext context,
     String title,
     String servant,
     String grade,
@@ -667,7 +881,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
           textDirection: pw.TextDirection.rtl,
           build: (ctx) => [
             pw.Text(
-              "📖 $title",
+              'title_format'.tr(context).replaceFirst('%s', title),
               style: pw.TextStyle(
                 fontSize: 20,
                 font: alfareesFont,
@@ -676,15 +890,24 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
             ),
             pw.SizedBox(height: 10),
             pw.Text(
-              "👤 الخادم: $servant",
+              'servant_format'.tr(context).replaceFirst('%s', servant),
               style: pw.TextStyle(font: alfareesFont),
             ),
             pw.Text(
-              "🎓 السنة: $grade",
+              'grade_format'.tr(context).replaceFirst('%s', grade),
               style: pw.TextStyle(font: alfareesFont),
             ),
             pw.Text(
-              "📅 التاريخ: ${DateFormat('yMMMd', 'ar').format(date)}",
+              'date_format'
+                  .tr(context)
+                  .replaceFirst(
+                    '%s',
+                    DateFormat(
+                      'yMMMd',
+                      LanguageService().currentLocale.value,
+                    ).format(date),
+                  ),
+
               style: pw.TextStyle(font: alfareesFont),
             ),
             pw.Divider(),
@@ -692,7 +915,10 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
             if (imageWidgets.isNotEmpty)
               ...imageWidgets
             else
-              pw.Text("(لا توجد صور)", style: pw.TextStyle(font: alfareesFont)),
+              pw.Text(
+                'no_images'.tr(context),
+                style: pw.TextStyle(font: alfareesFont),
+              ),
           ],
         ),
       );
@@ -707,8 +933,17 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
     if (_myGroupId.isEmpty) return false;
     if (_isAdmin) return true;
     final diff = DateTime.now().difference(createdDate).inDays;
-    return (authorName == _currentServantName || authorName == "خادم") &&
+    return (authorName == _currentServantName ||
+            authorName == 'servant_relation'.tr(context)) &&
         diff <= 7;
+  }
+
+  Map<String, dynamic> _getActualData(models.Document doc) {
+    final rawDataField = doc.data['data'];
+    if (rawDataField is Map<String, dynamic>) {
+      return rawDataField;
+    }
+    return doc.data;
   }
 
   @override
@@ -719,7 +954,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("التحضير والمناهج"),
+        title: Text('preparation_and_curricula'.tr(context)),
         backgroundColor: const Color(0xFF0288D1),
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -728,9 +963,15 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: [
-            const Tab(text: "أرشيف الدروس", icon: Icon(Icons.history)),
+            Tab(
+              text: 'lessons_archive'.tr(context),
+              icon: const Icon(Icons.history),
+            ),
             if (_canWrite)
-              const Tab(text: "تحضير درس جديد", icon: Icon(Icons.edit_note)),
+              Tab(
+                text: 'prepare_new_lesson'.tr(context),
+                icon: const Icon(Icons.edit_note),
+              ),
           ],
         ),
       ),
@@ -745,7 +986,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: "بحث بعنوان الموضوع...",
+                    hintText: 'search_subject_title'.tr(context),
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -761,16 +1002,22 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
                     : RefreshIndicator(
                         onRefresh: _fetchPreparations,
                         child: _preparations.isEmpty
-                            ? const Center(child: Text("لا توجد مواضيع مضافة"))
+                            ? Center(
+                                child: Text(
+                                  'no_subjects_added_list'.tr(context),
+                                ),
+                              )
                             : ListView.builder(
                                 padding: const EdgeInsets.only(bottom: 80),
                                 itemCount: _preparations.length,
                                 itemBuilder: (context, index) {
                                   final doc = _preparations[index];
-                                  final data = doc.data;
-                                  final title = data['title'] ?? 'بدون عنوان';
+                                  final data = _getActualData(doc);
+                                  final title =
+                                      data['title'] ?? 'untitled'.tr(context);
                                   final servant =
-                                      data['servantName'] ?? 'غير معروف';
+                                      data['servantName'] ??
+                                      'unknown_prep'.tr(context);
                                   final grade = data['grade'] ?? '';
                                   final dateStr = data['date'];
                                   DateTime date = DateTime.now();
@@ -814,7 +1061,7 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
                                         ),
                                       ),
                                       subtitle: Text(
-                                        "$servant • $grade • ${DateFormat('MM/dd').format(date)}",
+                                        "$servant • $grade • ${DateFormat('MM/dd', LanguageService().currentLocale.value).format(date)}",
                                       ),
                                       children: [
                                         if (images.isNotEmpty)
@@ -927,8 +1174,12 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
                                                 Icons.picture_as_pdf,
                                                 color: Colors.red,
                                               ),
-                                              label: const Text("PDF"),
+                                              label: Text(
+                                                "pdf_label".tr(context),
+                                              ),
+
                                               onPressed: () => _exportToPdf(
+                                                context,
                                                 title,
                                                 servant,
                                                 grade,
@@ -942,7 +1193,9 @@ class _PreparationListAndFormPageState extends State<PreparationListAndFormPage>
                                                   Icons.delete,
                                                   color: Colors.grey,
                                                 ),
-                                                label: const Text("حذف"),
+                                                label: Text(
+                                                  'delete_btn'.tr(context),
+                                                ),
                                                 onPressed: () =>
                                                     _deletePreparation(
                                                       doc.$id,

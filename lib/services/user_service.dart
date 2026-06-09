@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -157,6 +158,32 @@ class UserService {
       }
     } catch (e) {
       debugPrint("Error fetching groupId: $e");
+      return null;
+    }
+  }
+
+  /// Get the team ID for a specific group
+  Future<String?> getGroupTeamId(String groupId) async {
+    try {
+      final doc = await _databases.getDocument(
+        databaseId: databaseId,
+        collectionId: 'groups',
+        documentId: groupId,
+      );
+      return doc.data['teamId'];
+    } catch (e) {
+      debugPrint("Error fetching teamId for group $groupId: $e");
+      // Try to get from cache if available?
+      final userId = await getCachedUserId();
+      if (userId != null) {
+        final cached = await SharedPreferences.getInstance().then(
+          (p) => p.getString('cached_user_group_id_$userId'),
+        );
+        if (cached != null) {
+          final data = jsonDecode(cached);
+          if (data['groupId'] == groupId) return data['teamId'];
+        }
+      }
       return null;
     }
   }

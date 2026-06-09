@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
@@ -8,7 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart' as printing;
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,6 +23,9 @@ import '../services/image_service.dart';
 import '../services/permission_service.dart';
 import '../services/appwrite_service.dart';
 import '../services/data_cache_service.dart'; // 🚀 Added Cache Service
+import '../services/language_service.dart'; // ✅ Added Language Service
+import '../services/sync_service.dart'; // 🚀 Added Sync Service
+import '../l10n/app_translations.dart'; // ✅ Added Translation Support
 
 // -------------------------------------------------------------------
 // 🧱 MeetingFormPage
@@ -49,7 +53,8 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _titleController = TextEditingController();
 
-  final List<File> _selectedImages = [];
+  // 🚀 Modified for Web Support (Use XFile instead of File)
+  final List<XFile> _selectedImages = [];
   bool _isLoading = false;
 
   final ImageService _imageService = ImageService();
@@ -58,7 +63,10 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
   static const String databaseId = AppwriteService.databaseId;
   static const String collectionId = 'meetings';
 
-  Future<File> compressImage(File file) async {
+  Future<dynamic> compressImage(XFile file) async {
+    // 🚀 Skip compression on Web
+    if (kIsWeb) return file;
+
     final dir = await getTemporaryDirectory();
     final targetPath = path.join(
       dir.path,
@@ -66,7 +74,7 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
     );
 
     var result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
+      file.path,
       targetPath,
       quality: 85,
       minWidth: 1280,
@@ -74,7 +82,7 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
       format: CompressFormat.jpeg,
     );
 
-    return result != null ? File(result.path) : file;
+    return result ?? file;
   }
 
   Future<void> _pickMultiImages() async {
@@ -82,16 +90,22 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
     final List<XFile> pickedFiles = await picker.pickMultiImage();
     if (pickedFiles.isNotEmpty) {
       setState(() {
-        _selectedImages.addAll(pickedFiles.map((xfile) => File(xfile.path)));
+        _selectedImages.addAll(pickedFiles); // 🚀 Store XFiles directly
       });
     }
   }
 
   Future<void> _saveMeeting() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final String uploadImagesFailedMsg = 'upload_images_failed'.tr(context);
+    final String newMeetingMsg = 'new_meeting'.tr(context);
+    final String meetingsMsg = 'meetings'.tr(context);
+
     if (!await PermissionService.canWrite(widget.groupId)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")),
+          SnackBar(content: Text('subscription_expired'.tr(context))),
         );
       }
       return;
@@ -100,13 +114,50 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
 
-    List<String> imageLinks = [];
-    List<String> fileIds = [];
+    final String titleStr = _titleController.text.trim();
+    final String dateStr = DateTime.now().toIso8601String();
+
+    final Map<String, dynamic> syncData = {
+      'title': titleStr,
+      'servantName': widget.servantName,
+      'date': dateStr,
+      'groupId': widget.groupId,
+      'teamId': widget.teamId,
+      'localImagePaths': _selectedImages.map((e) => e.path).toList(),
+    };
 
     try {
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'meeting_add',
+          'data': syncData,
+        });
+
+        // Optimistic UI Feedback
+        if (mounted) {
+          _titleController.clear();
+          _selectedImages.clear();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('offline_congratulation_queued'.tr(context)),
+              backgroundColor: Colors.blueGrey,
+            ),
+          );
+          widget.onMeetingSaved();
+        }
+        return;
+      }
+
+      List<String> imageLinks = [];
+      List<String> fileIds = [];
+
       if (_selectedImages.isNotEmpty) {
-        for (File imageFile in _selectedImages) {
-          File compressedImage = await compressImage(imageFile);
+        for (XFile imageFile in _selectedImages) {
+          // 🚀 Compress (returns XFile or File, dynamic is fine for uploadImage)
+          final compressedImage = await compressImage(imageFile);
+
           Map<String, String>? uploadResult = await _imageService.uploadImage(
             compressedImage,
           );
@@ -115,7 +166,7 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
             imageLinks.add(uploadResult['url']!);
             fileIds.add(uploadResult['id']!);
           } else {
-            throw Exception("فشل رفع الصور");
+            throw Exception(uploadImagesFailedMsg);
           }
         }
       }
@@ -125,9 +176,9 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
         collectionId: collectionId,
         documentId: ID.unique(),
         data: {
-          'title': _titleController.text.trim(),
+          'title': titleStr,
           'servantName': widget.servantName,
-          'date': DateTime.now().toIso8601String(),
+          'date': dateStr,
           'imageUrls': imageLinks,
           'fileIds': fileIds,
           'groupId': widget.groupId,
@@ -146,8 +197,8 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
         for (String url in imageLinks) {
           await statusService.addStatus(
             imageUrl: url,
-            caption: "اجتماع جديد: ${_titleController.text.trim()}",
-            source: "الاجتماعات",
+            caption: newMeetingMsg.replaceFirst('%s', titleStr),
+            source: meetingsMsg,
             teamId: widget.teamId,
             uploaderName: widget.servantName, // 🚀 Pass uploader name
           );
@@ -158,17 +209,44 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
         _titleController.clear();
         _selectedImages.clear();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ تم حفظ الاجتماع بنجاح"),
+          SnackBar(
+            content: Text('meeting_saved_success'.tr(context)),
             backgroundColor: Colors.green,
           ),
         );
         widget.onMeetingSaved();
       }
     } catch (e) {
+      debugPrint("❌ Error saving meeting: $e");
+      // Network retry
+      if (e is AppwriteException &&
+          (e.type == 'network_error' ||
+              e.message?.contains('Socket') == true)) {
+        await DataCacheService().addPendingOperation({
+          'type': 'meeting_add',
+          'data': syncData,
+        });
+        if (mounted) {
+          _titleController.clear();
+          _selectedImages.clear();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('offline_congratulation_queued'.tr(context)),
+              backgroundColor: Colors.blueGrey,
+            ),
+          );
+          widget.onMeetingSaved();
+        }
+        return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("❌ حدث خطأ: $e"), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(
+              'error_occurred'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -200,13 +278,14 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
             children: [
               TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: "عنوان الاجتماع",
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: 'meeting_title'.tr(context),
+                  border: const OutlineInputBorder(),
                   filled: true,
                   fillColor: Colors.white,
                 ),
-                validator: (v) => v!.isEmpty ? "الرجاء كتابة العنوان" : null,
+                validator: (v) =>
+                    v!.isEmpty ? 'enter_meeting_title'.tr(context) : null,
               ),
               const SizedBox(height: 20),
               ElevatedButton.icon(
@@ -214,8 +293,13 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
                 icon: const Icon(Icons.photo_library),
                 label: Text(
                   _selectedImages.isEmpty
-                      ? "اختيار صور للاجتماع (اختياري)"
-                      : "تم اختيار (${_selectedImages.length}) صور",
+                      ? 'choose_images_meeting'.tr(context)
+                      : 'images_selected'
+                            .tr(context)
+                            .replaceFirst(
+                              '%s',
+                              _selectedImages.length.toString(),
+                            ),
                 ),
               ),
 
@@ -230,12 +314,19 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
                       padding: const EdgeInsets.only(right: 8),
                       child: Stack(
                         children: [
-                          Image.file(
-                            _selectedImages[i],
-                            width: 120,
-                            height: 120,
-                            fit: BoxFit.cover,
-                          ),
+                          kIsWeb
+                              ? Image.network(
+                                  _selectedImages[i].path,
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                )
+                              : Image.file(
+                                  File(_selectedImages[i].path),
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                ),
                           Positioned(
                             top: 0,
                             right: 0,
@@ -275,7 +366,11 @@ class _MeetingFormPageState extends State<MeetingFormPage> {
                           ),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_isLoading ? "جاري الحفظ..." : "حفظ الاجتماع"),
+                  label: Text(
+                    _isLoading
+                        ? 'saving'.tr(context)
+                        : 'save_meeting'.tr(context),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0288D1),
                     foregroundColor: Colors.white,
@@ -314,7 +409,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
 
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   RealtimeSubscription? _userSubscription;
 
   static const String databaseId = AppwriteService.databaseId;
@@ -346,76 +441,128 @@ class _MeetingsListPageState extends State<MeetingsListPage>
   }
 
   Future<void> _loadUserData() async {
-    try {
-      final user = await _account.get();
-      _userSubscription = _realtime.subscribe([
-        'databases.$databaseId.collections.users_info.documents.${user.$id}',
-      ]);
-      _userSubscription!.stream.listen((event) {
-        if (mounted) _fetchUserGroupId(user.$id);
-      });
-      await _fetchUserGroupId(user.$id);
-
-      final name = await UserService().getCurrentUserName();
-      if (mounted) setState(() => _currentServantName = name);
-    } catch (e) {
-      debugPrint("Error loading user: $e");
-    }
-  }
-
-  Future<void> _fetchUserGroupId(String userId) async {
-    // 1. Check Cache
-    final cached = await DataCacheService().getCachedUserGroupId(userId);
-    if (cached != null) {
-      if (mounted) {
-        setState(() {
-          if (cached['groupId'] != _myGroupId) _myGroupId = cached['groupId']!;
-          if (cached['teamId'] != null) _teamId = cached['teamId'];
-          _isAdmin = (cached['role'] == 'admin');
-        });
-        if (_myGroupId.isNotEmpty) _fetchMeetings();
+    // 🚀 1. Try to load from cache IMMEDIATELY (Non-blocking)
+    final cachedUserId = await UserService().getCachedUserId();
+    if (cachedUserId != null) {
+      final cachedCtx = await DataCacheService().getCachedUserGroupId(
+        cachedUserId,
+      );
+      if (cachedCtx != null) {
+        if (mounted) {
+          setState(() {
+            if (cachedCtx['groupId'] != _myGroupId) {
+              _myGroupId = cachedCtx['groupId']!;
+            }
+            if (cachedCtx['teamId'] != null) {
+              _teamId = cachedCtx['teamId'];
+            }
+            _isAdmin = (cachedCtx['role'] == 'admin');
+          });
+          _canWrite = await PermissionService.canWrite(_myGroupId);
+          if (mounted) {
+            setState(() {
+              int newLength = _canWrite ? 2 : 1;
+              if (_tabController.length != newLength) {
+                _tabController.dispose();
+                _tabController = TabController(length: newLength, vsync: this);
+              }
+            });
+            if (_myGroupId.isNotEmpty) _fetchMeetings();
+          }
+        }
       }
     }
 
+    // 🚀 2. Background Network Refresh (Silent)
     try {
+      final name = await UserService().getCurrentUserName();
+      if (mounted) setState(() => _currentServantName = name);
+
+      final user = await _account.get();
+      final userId = user.$id;
+
       final doc = await _databases.getDocument(
         databaseId: databaseId,
         collectionId: 'users_info',
         documentId: userId,
       );
+
       final gid = doc.data['groupId'] ?? '';
       final role = doc.data['role'] ?? '';
+      final currentTeamId = doc.data['teamId'] as String?;
 
-      // Update Cache
       await DataCacheService().cacheUserGroupId(
         userId,
         gid,
-        doc.data['teamId'],
+        currentTeamId,
         role,
       );
+
       if (mounted) {
         setState(() {
-          if (gid != _myGroupId) _myGroupId = gid;
-          if (doc.data['teamId'] != null) {
-            _teamId = doc.data['teamId'] as String;
+          if (gid != _myGroupId) {
+            _myGroupId = gid;
+          }
+          if (currentTeamId != null) {
+            _teamId = currentTeamId;
           }
           _isAdmin = (role == 'admin');
         });
-        _canWrite = await PermissionService.canWrite(gid);
+
+        _canWrite = await PermissionService.canWrite(_myGroupId);
         if (mounted) {
           setState(() {
-            // Update TabController length if needed
             int newLength = _canWrite ? 2 : 1;
             if (_tabController.length != newLength) {
               _tabController.dispose();
               _tabController = TabController(length: newLength, vsync: this);
             }
           });
-          if (gid.isNotEmpty) _fetchMeetings();
+          if (_myGroupId.isNotEmpty) _fetchMeetings();
         }
       }
+
+      _userSubscription?.close();
+      _userSubscription = _realtime.subscribe([
+        'databases.$databaseId.collections.users_info.documents.$userId',
+      ]);
+
+      _userSubscription!.stream.listen((event) {
+        if (mounted) {
+          final payloadGid = event.payload['groupId'] ?? '';
+          final payloadRole = event.payload['role'] ?? '';
+          final payloadTeamId = event.payload['teamId'] as String?;
+
+          setState(() {
+            if (payloadGid != _myGroupId) {
+              _myGroupId = payloadGid;
+            }
+            if (payloadTeamId != null) {
+              _teamId = payloadTeamId;
+            }
+            _isAdmin = (payloadRole == 'admin');
+          });
+
+          PermissionService.canWrite(_myGroupId).then((can) {
+            if (mounted) {
+              setState(() {
+                _canWrite = can;
+                int newLength = _canWrite ? 2 : 1;
+                if (_tabController.length != newLength) {
+                  _tabController.dispose();
+                  _tabController = TabController(
+                    length: newLength,
+                    vsync: this,
+                  );
+                }
+              });
+              if (_myGroupId.isNotEmpty) _fetchMeetings();
+            }
+          });
+        }
+      });
     } catch (e) {
-      debugPrint("Error fetching gid: $e");
+      debugPrint("Offline mode active or error loading user: $e");
     }
   }
 
@@ -475,7 +622,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("⚠️ لا تملك صلاحية")));
+        ).showSnackBar(SnackBar(content: Text('no_permission'.tr(context))));
       }
       return;
     }
@@ -484,16 +631,19 @@ class _MeetingsListPageState extends State<MeetingsListPage>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("تأكيد الحذف"),
-        content: const Text("هل أنت متأكد من حذف هذا الاجتماع؟"),
+        title: Text('delete_meeting_title'.tr(context)),
+        content: Text('delete_meeting_warning'.tr(context)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("حذف", style: TextStyle(color: Colors.red)),
+            child: Text(
+              'delete_btn'.tr(context),
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -501,7 +651,35 @@ class _MeetingsListPageState extends State<MeetingsListPage>
 
     if (confirm != true) return;
 
+    final syncData = {
+      'docId': docId,
+      'groupId': _myGroupId,
+      'fileIds': fileIds,
+      'imageUrls': imageUrls,
+    };
+
     try {
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'meeting_delete',
+          'data': syncData,
+        });
+
+        // Optimistic UI Update
+        await DataCacheService().removeMeetingFromCache(_myGroupId, docId);
+        if (mounted) {
+          setState(() {
+            _meetings.removeWhere((doc) => doc.$id == docId);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('deleted_success'.tr(context))),
+          );
+        }
+        return;
+      }
+
       final storage = AppwriteService().storage;
       for (var id in fileIds) {
         try {
@@ -524,14 +702,38 @@ class _MeetingsListPageState extends State<MeetingsListPage>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("✅ تم الحذف")));
+        ).showSnackBar(SnackBar(content: Text('deleted_success'.tr(context))));
         _fetchMeetings();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ: $e")));
+        // Network retry
+        if (e is AppwriteException &&
+            (e.type == 'network_error' ||
+                e.message?.contains('Socket') == true)) {
+          await DataCacheService().addPendingOperation({
+            'type': 'meeting_delete',
+            'data': syncData,
+          });
+          if (!mounted) return;
+          await DataCacheService().removeMeetingFromCache(_myGroupId, docId);
+          if (!mounted) return;
+          setState(() {
+            _meetings.removeWhere((doc) => doc.$id == docId);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('deleted_success'.tr(context))),
+          );
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'error_occurred'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -543,42 +745,131 @@ class _MeetingsListPageState extends State<MeetingsListPage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("تعديل الاجتماع"),
+        title: Text('edit_meeting_title'.tr(context)),
         content: TextField(
           controller: _editTitleController,
-          decoration: const InputDecoration(labelText: "عنوان الاجتماع"),
+          decoration: InputDecoration(labelText: 'meeting_title'.tr(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           TextButton(
             onPressed: () async {
+              final newTitle = _editTitleController.text.trim();
+              final syncData = {
+                'docId': doc.$id,
+                'groupId': _myGroupId,
+                'updates': {'title': newTitle},
+              };
+              final savedSuccessMsg = 'saved_success'.tr(context);
+
               try {
+                // 🚀 Offline Logic
+                final bool online = await SyncService().isOnline();
+                if (!online) {
+                  await DataCacheService().addPendingOperation({
+                    'type': 'meeting_edit',
+                    'data': syncData,
+                  });
+
+                  // Optimistic UI Update
+                  await DataCacheService().updateMeetingInCache(
+                    _myGroupId,
+                    doc.$id,
+                    {'title': newTitle},
+                  );
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) {
+                    setState(() {
+                      final idx = _meetings.indexWhere((m) => m.$id == doc.$id);
+                      if (idx != -1) {
+                        final m = _meetings[idx];
+                        _meetings[idx] = models.Document(
+                          $id: m.$id,
+                          $collectionId: m.$collectionId,
+                          $databaseId: m.$databaseId,
+                          $createdAt: m.$createdAt,
+                          $updatedAt: m.$updatedAt,
+                          $permissions: m.$permissions,
+                          data: {...m.data, 'title': newTitle},
+                        );
+                      }
+                    });
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(savedSuccessMsg)));
+                  }
+                  return;
+                }
+
                 await _databases.updateDocument(
                   databaseId: databaseId,
                   collectionId: collectionId,
                   documentId: doc.$id,
-                  data: {'title': _editTitleController.text.trim()},
+                  data: {'title': newTitle},
                 );
+
                 if (ctx.mounted) Navigator.pop(ctx);
                 if (mounted) {
                   _fetchMeetings();
                   ScaffoldMessenger.of(
                     context,
-                  ).showSnackBar(const SnackBar(content: Text("✅ تم التعديل")));
+                  ).showSnackBar(SnackBar(content: Text(savedSuccessMsg)));
                 }
               } catch (e) {
                 if (ctx.mounted) Navigator.pop(ctx);
                 if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text("❌ خطأ: $e")));
+                  // Network retry
+                  if (e is AppwriteException &&
+                      (e.type == 'network_error' ||
+                          e.message?.contains('Socket') == true)) {
+                    await DataCacheService().addPendingOperation({
+                      'type': 'meeting_edit',
+                      'data': syncData,
+                    });
+                    await DataCacheService().updateMeetingInCache(
+                      _myGroupId,
+                      doc.$id,
+                      {'title': newTitle},
+                    );
+                    setState(() {
+                      final idx = _meetings.indexWhere((m) => m.$id == doc.$id);
+                      if (idx != -1) {
+                        final m = _meetings[idx];
+                        _meetings[idx] = models.Document(
+                          $id: m.$id,
+                          $collectionId: m.$collectionId,
+                          $databaseId: m.$databaseId,
+                          $createdAt: m.$createdAt,
+                          $updatedAt: m.$updatedAt,
+                          $permissions: m.$permissions,
+                          data: {...m.data, 'title': newTitle},
+                        );
+                      }
+                    });
+                    if (mounted) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(savedSuccessMsg)));
+                    }
+                    return;
+                  }
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'error_occurred'
+                            .tr(context)
+                            .replaceFirst('%s', e.toString()),
+                      ),
+                    ),
+                  );
                 }
               }
             },
-            child: const Text("حفظ"),
+            child: Text('save_btn'.tr(context)),
           ),
         ],
       ),
@@ -586,11 +877,18 @@ class _MeetingsListPageState extends State<MeetingsListPage>
   }
 
   Future<void> _exportToPdf(
+    BuildContext context,
     String title,
     String servant,
     DateTime date,
     List<dynamic> imageUrls,
   ) async {
+    final String titleFormatStr = 'title_format'.tr(context);
+    final String servantFormatStr = 'servant_format'.tr(context);
+    final String dateFormatStr = 'date_format'.tr(context);
+    final String noImagesStr = 'no_images'.tr(context);
+    final String localeCode = LanguageService().currentLocale.value;
+
     try {
       final pdf = pw.Document();
       final fontData = await rootBundle.load('assets/fonts/Alfares.ttf');
@@ -617,7 +915,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
           textDirection: pw.TextDirection.rtl,
           build: (ctx) => [
             pw.Text(
-              "📖 $title",
+              titleFormatStr.replaceFirst('%s', title),
               style: pw.TextStyle(
                 fontSize: 20,
                 font: alfareesFont,
@@ -626,11 +924,15 @@ class _MeetingsListPageState extends State<MeetingsListPage>
             ),
             pw.SizedBox(height: 10),
             pw.Text(
-              "👤 الخادم: $servant",
+              servantFormatStr.replaceFirst('%s', servant),
               style: pw.TextStyle(font: alfareesFont),
             ),
             pw.Text(
-              "📅 التاريخ: ${DateFormat('yMMMd', 'ar').format(date)}",
+              dateFormatStr.replaceFirst(
+                '%s',
+                DateFormat('yMMMd', localeCode).format(date),
+              ),
+
               style: pw.TextStyle(font: alfareesFont),
             ),
             pw.Divider(),
@@ -638,7 +940,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
             if (imageWidgets.isNotEmpty)
               ...imageWidgets
             else
-              pw.Text("(لا توجد صور)", style: pw.TextStyle(font: alfareesFont)),
+              pw.Text(noImagesStr, style: pw.TextStyle(font: alfareesFont)),
           ],
         ),
       );
@@ -654,8 +956,17 @@ class _MeetingsListPageState extends State<MeetingsListPage>
     if (_isAdmin) return true;
     if (_currentServantName.isEmpty) return false;
     final diff = DateTime.now().difference(createdDate).inDays;
-    return (authorName == _currentServantName || authorName == "خادم") &&
+    return (authorName == _currentServantName ||
+            authorName == 'servant_relation'.tr(context)) &&
         diff <= 7;
+  }
+
+  Map<String, dynamic> _getActualData(models.Document doc) {
+    final rawDataField = doc.data['data'];
+    if (rawDataField is Map<String, dynamic>) {
+      return rawDataField;
+    }
+    return doc.data;
   }
 
   @override
@@ -666,7 +977,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(" الاجتماعات"),
+        title: Text('meetings'.tr(context)),
         backgroundColor: const Color(0xFF0288D1),
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -675,9 +986,12 @@ class _MeetingsListPageState extends State<MeetingsListPage>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: [
-            const Tab(text: "بحث وعرض", icon: Icon(Icons.list)),
+            Tab(
+              text: 'search_and_view'.tr(context),
+              icon: const Icon(Icons.list),
+            ),
             if (_canWrite)
-              const Tab(text: "إضافة اجتماع", icon: Icon(Icons.add)),
+              Tab(text: 'add_meeting'.tr(context), icon: const Icon(Icons.add)),
           ],
         ),
       ),
@@ -692,7 +1006,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: "بحث...",
+                    hintText: 'search_hint'.tr(context),
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -708,18 +1022,20 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                     : RefreshIndicator(
                         onRefresh: _fetchMeetings,
                         child: _meetings.isEmpty
-                            ? const Center(
-                                child: Text("لا توجد اجتماعات مضافة"),
+                            ? Center(
+                                child: Text('no_meetings_added'.tr(context)),
                               )
                             : ListView.builder(
                                 padding: const EdgeInsets.only(bottom: 80),
                                 itemCount: _meetings.length,
                                 itemBuilder: (context, index) {
                                   final doc = _meetings[index];
-                                  final data = doc.data;
-                                  final title = data['title'] ?? 'بدون عنوان';
+                                  final data = _getActualData(doc);
+                                  final title =
+                                      data['title'] ?? 'untitled'.tr(context);
                                   final servant =
-                                      data['servantName'] ?? 'غير معروف';
+                                      data['servantName'] ??
+                                      'unknown_prep'.tr(context);
                                   final dateStr = data['date'];
                                   DateTime date = DateTime.now();
                                   if (dateStr != null) {
@@ -758,7 +1074,7 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                                         ),
                                       ),
                                       subtitle: Text(
-                                        "$servant • ${DateFormat('MM/dd').format(date)}",
+                                        "$servant • ${DateFormat('MM/dd', LanguageService().currentLocale.value).format(date)}",
                                       ),
                                       children: [
                                         if (images.isNotEmpty)
@@ -861,8 +1177,12 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                                                 Icons.picture_as_pdf,
                                                 color: Colors.red,
                                               ),
-                                              label: const Text("PDF"),
+                                              label: Text(
+                                                "pdf_label".tr(context),
+                                              ),
+
                                               onPressed: () => _exportToPdf(
+                                                context,
                                                 title,
                                                 servant,
                                                 date,
@@ -875,7 +1195,9 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                                                   Icons.edit,
                                                   color: Colors.orange,
                                                 ),
-                                                label: const Text("تعديل"),
+                                                label: Text(
+                                                  'edit_btn'.tr(context),
+                                                ),
                                                 onPressed: () =>
                                                     _editMeeting(doc),
                                               ),
@@ -884,7 +1206,9 @@ class _MeetingsListPageState extends State<MeetingsListPage>
                                                   Icons.delete,
                                                   color: Colors.grey,
                                                 ),
-                                                label: const Text("حذف"),
+                                                label: Text(
+                                                  'delete_btn'.tr(context),
+                                                ),
                                                 onPressed: () => _deleteMeeting(
                                                   doc.$id,
                                                   fileIds,

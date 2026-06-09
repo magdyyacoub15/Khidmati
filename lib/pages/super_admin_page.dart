@@ -6,6 +6,7 @@ import 'dart:math';
 import 'dart:ui';
 import '../services/appwrite_service.dart';
 import '../services/subscription_service.dart';
+import '../l10n/app_translations.dart';
 
 class SuperAdminPage extends StatefulWidget {
   const SuperAdminPage({super.key});
@@ -90,7 +91,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
         collectionId: groupsCollectionId,
         queries: [
           Query.orderDesc('\$createdAt'),
-          Query.limit(100), // Adjust limit as needed
+          Query.limit(5000), // Fetch up to 5000 groups (effectively all)
         ],
       );
       if (mounted) {
@@ -189,9 +190,12 @@ class _SuperAdminPageState extends State<SuperAdminPage>
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text(
-          "لوحة تحكم المشرف العام",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          'super_admin_panel_title'.tr(context),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -219,8 +223,8 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                     children: [
                       Expanded(
                         child: _buildStatCard(
-                          "عدد المستخدمين",
-                          "$_totalUsersCount",
+                          'total_users_count'.tr(context),
+                          _totalUsersCount.toString(),
                           Icons.people_alt,
                           Colors.blue.shade300,
                         ),
@@ -228,8 +232,8 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                       const SizedBox(width: 12),
                       Expanded(
                         child: _buildStatCard(
-                          "عدد المسؤولين",
-                          "$_totalAdminsCount",
+                          'total_admins_count'.tr(context),
+                          _totalAdminsCount.toString(),
                           Icons.admin_panel_settings,
                           Colors.orange.shade300,
                         ),
@@ -257,7 +261,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                           textAlign: TextAlign.right,
                           style: const TextStyle(color: Colors.white),
                           decoration: InputDecoration(
-                            hintText: "بحث بالإيميل أو اسم الكنيسة...",
+                            hintText: 'search_by_email_or_church'.tr(context),
                             hintStyle: const TextStyle(color: Colors.white70),
                             prefixIcon: const Icon(
                               Icons.search,
@@ -280,13 +284,15 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                           child: CircularProgressIndicator(color: Colors.white),
                         )
                       : _filteredGroups.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text(
-                            "لا توجد نتائج",
-                            style: TextStyle(color: Colors.white70),
+                            'no_results_found'.tr(context),
+                            style: const TextStyle(color: Colors.white70),
                           ),
                         )
-                      : ListView.builder(
+                      : RefreshIndicator(
+                          onRefresh: () async => await _fetchGroups(showLoading: false),
+                          child: ListView.builder(
                           itemCount: _filteredGroups.length,
                           padding: const EdgeInsets.all(15),
                           itemBuilder: (context, index) {
@@ -306,7 +312,9 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                 DateTime.now().difference(updateTime).inDays >
                                 30;
 
-                            String statusText = "غير محدد";
+                            String statusText = 'unspecified_status'.tr(
+                              context,
+                            );
                             Color statusColor = Colors.grey;
                             DateTime? endDate;
 
@@ -314,12 +322,14 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                               endDate = DateTime.tryParse(endDateStr);
                               if (endDate != null &&
                                   endDate.isAfter(DateTime.now())) {
-                                statusText = isTrial ? "تجريبي" : "نشط";
+                                statusText = isTrial
+                                    ? 'trial_status'.tr(context)
+                                    : 'active_status'.tr(context);
                                 statusColor = isTrial
                                     ? Colors.orange
                                     : Colors.green;
                               } else {
-                                statusText = "منتهي";
+                                statusText = 'expired_status'.tr(context);
                                 statusColor = Colors.red;
                               }
                             }
@@ -373,7 +383,9 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                           ),
                                           const SizedBox(width: 4),
                                           Text(
-                                            "الحالة: $statusText",
+                                            'status_prefix'
+                                                .tr(context)
+                                                .replaceFirst('%s', statusText),
                                             style: const TextStyle(
                                               color: Colors.blueGrey,
                                               fontSize: 12,
@@ -392,7 +404,18 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                           ),
                                           const SizedBox(width: 4),
                                           Text(
-                                            "تنتهي في: ${endDate != null ? DateFormat('yyyy-MM-dd').format(endDate) : 'غير محدد'}",
+                                            'expires_at_prefix'
+                                                .tr(context)
+                                                .replaceFirst(
+                                                  '%s',
+                                                  endDate != null
+                                                      ? DateFormat(
+                                                          'yyyy-MM-dd',
+                                                        ).format(endDate)
+                                                      : 'unspecified_status'.tr(
+                                                          context,
+                                                        ),
+                                                ),
                                             style: TextStyle(
                                               color: Colors.blue.shade700,
                                               fontSize: 12,
@@ -416,7 +439,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                                 ),
                                               ),
                                               child: Text(
-                                                "خامل 😴",
+                                                'idle_status'.tr(context),
                                                 style: TextStyle(
                                                   color: Colors.orange.shade800,
                                                   fontSize: 10,
@@ -441,21 +464,23 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                             CrossAxisAlignment.start,
                                         children: [
                                           _buildInfoRow(
-                                            "المعرف",
+                                            'identifier_label'.tr(context),
                                             group.$id,
                                             Icons.vpn_key_outlined,
                                           ),
                                           _buildInfoRow(
-                                            "آخر نشاط",
+                                            'last_activity_label'.tr(context),
                                             DateFormat(
                                               'yyyy-MM-dd HH:mm',
                                             ).format(updateTime),
                                             Icons.history,
                                           ),
                                           const Divider(height: 30),
-                                          const Text(
-                                            "تمديد الاشتراك (بسهولة):",
-                                            style: TextStyle(
+                                          Text(
+                                            'extend_subscription_easy'.tr(
+                                              context,
+                                            ),
+                                            style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               color: Color(0xFF1565C0),
                                             ),
@@ -467,29 +492,37 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                                             children: [
                                               _buildExtendButton(
                                                 group.$id,
-                                                "شهر",
+                                                'one_month_duration'.tr(
+                                                  context,
+                                                ),
                                                 30,
                                               ),
                                               _buildExtendButton(
                                                 group.$id,
-                                                "3 شهور",
+                                                'three_months_duration'.tr(
+                                                  context,
+                                                ),
                                                 90,
                                               ),
                                               _buildExtendButton(
                                                 group.$id,
-                                                "6 شهور",
+                                                'six_months_duration'.tr(
+                                                  context,
+                                                ),
                                                 180,
                                               ),
                                               _buildExtendButton(
                                                 group.$id,
-                                                "سنة",
+                                                'one_year_duration'.tr(context),
                                                 365,
                                               ),
                                             ],
                                           ),
                                           const SizedBox(height: 25),
                                           Text(
-                                            "إجراءات إضافية:",
+                                            'additional_actions_label'.tr(
+                                              context,
+                                            ),
                                             style: TextStyle(
                                               fontWeight: FontWeight.bold,
                                               color: Colors.red.shade900,
@@ -519,6 +552,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                               ),
                             );
                           },
+                        ),
                         ),
                 ),
               ],
@@ -557,7 +591,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
       ),
       child: IconButton(
         icon: const Icon(Icons.delete_forever, color: Colors.red, size: 28),
-        tooltip: "حذف المنظومة بالكامل",
+        tooltip: 'delete_entire_system_tooltip'.tr(context),
         onPressed: () => _showDeleteConfirmation(groupId, groupName),
       ),
     );
@@ -656,6 +690,10 @@ class _SuperAdminPageState extends State<SuperAdminPage>
     String groupId, {
     required Function(String) onProgress,
   }) async {
+    final deletingProgressStr = 'deleting_collection_progress'.tr(context);
+    final deletedItemsCountStr = 'deleted_items_count_progress'.tr(context);
+    final resettingMemberStr = 'resetting_member_permissions'.tr(context);
+
     // ... keep the logic as is ...
     try {
       final subcollections = [
@@ -687,7 +725,12 @@ class _SuperAdminPageState extends State<SuperAdminPage>
       // 1. Delete all documents in related collections
       for (var col in subcollections) {
         currentStep++;
-        onProgress("جاري مسح $col ($currentStep/$totalSteps)");
+        onProgress(
+          deletingProgressStr
+              .replaceFirst('%s', col)
+              .replaceFirst('%s', '$currentStep')
+              .replaceFirst('%s', '$totalSteps'),
+        );
 
         try {
           var docs = await _databases.listDocuments(
@@ -717,7 +760,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
               );
               deletedInCol += batch.length;
               onProgress(
-                "جاري مسح $col ($currentStep/$totalSteps)\nتم حذف $deletedInCol عنصر...",
+                "${deletingProgressStr.replaceFirst('%s', col).replaceFirst('%s', '$currentStep').replaceFirst('%s', '$totalSteps')}\n${deletedItemsCountStr.replaceFirst('%s', '$deletedInCol')}",
               );
               // Small delay to let the event loop breathe
               await Future.delayed(const Duration(milliseconds: 50));
@@ -736,7 +779,11 @@ class _SuperAdminPageState extends State<SuperAdminPage>
       }
 
       // 2. Clear memberships and user roles
-      onProgress("جاري تصفير صلاحيات الأعضاء ($totalSteps/$totalSteps)");
+      onProgress(
+        resettingMemberStr
+            .replaceFirst('%s', '$totalSteps')
+            .replaceFirst('%s', '$totalSteps'),
+      );
 
       var membershipDocs = await _databases.listDocuments(
         databaseId: databaseId,
@@ -784,8 +831,8 @@ class _SuperAdminPageState extends State<SuperAdminPage>
       if (mounted) {
         final messenger = ScaffoldMessenger.of(context);
         messenger.showSnackBar(
-          const SnackBar(
-            content: Text("✨ تم مسح المنظومة بالكامل بنجاح"),
+          SnackBar(
+            content: Text('system_deleted_successfully'.tr(context)),
             backgroundColor: Colors.green,
           ),
         );
@@ -794,7 +841,15 @@ class _SuperAdminPageState extends State<SuperAdminPage>
     } catch (e) {
       if (mounted) {
         final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(SnackBar(content: Text("❌ فشل الحذف: $e")));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'delete_system_failed'
+                  .tr(context)
+                  .replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -807,14 +862,26 @@ class _SuperAdminPageState extends State<SuperAdminPage>
           await _subscriptionService.extendSubscription(groupId, days);
           if (mounted) {
             messenger.showSnackBar(
-              SnackBar(content: Text("تم تمديد الاشتراك ($label)")),
+              SnackBar(
+                content: Text(
+                  'subscription_extended_success'
+                      .tr(context)
+                      .replaceFirst('%s', label),
+                ),
+              ),
             );
             _fetchGroups(showLoading: false); // Silent Refresh
           }
         } catch (e) {
           if (mounted) {
             messenger.showSnackBar(
-              SnackBar(content: Text("خطأ: تأكد من اتصال الإنترنت ($e)")),
+              SnackBar(
+                content: Text(
+                  'error_check_internet'
+                      .tr(context)
+                      .replaceFirst('%s', e.toString()),
+                ),
+              ),
             );
           }
         }
@@ -830,7 +897,7 @@ class _SuperAdminPageState extends State<SuperAdminPage>
   Widget _buildEditDateButton(String groupId, DateTime? currentDate) {
     return IconButton(
       icon: const Icon(Icons.calendar_today, color: Colors.blue),
-      tooltip: "تعديل التاريخ يدويًا",
+      tooltip: 'edit_date_manually'.tr(context),
       onPressed: () async {
         final messenger = ScaffoldMessenger.of(context);
         final DateTime? picked = await showDatePicker(
@@ -844,14 +911,18 @@ class _SuperAdminPageState extends State<SuperAdminPage>
             await _subscriptionService.updateSubscriptionDate(groupId, picked);
             if (mounted) {
               messenger.showSnackBar(
-                const SnackBar(content: Text("تم تحديث تاريخ الاشتراك")),
+                SnackBar(
+                  content: Text('subscription_date_updated'.tr(context)),
+                ),
               );
               _fetchGroups(showLoading: false);
             }
           } catch (e) {
             if (mounted) {
               messenger.showSnackBar(
-                const SnackBar(content: Text("فشل التحديث: تأكد من الإنترنت")),
+                SnackBar(
+                  content: Text('update_failed_check_internet'.tr(context)),
+                ),
               );
             }
           }
@@ -863,30 +934,39 @@ class _SuperAdminPageState extends State<SuperAdminPage>
   Widget _buildCustomDaysButton(String groupId) {
     return IconButton(
       icon: const Icon(Icons.exposure, color: Colors.orange),
-      tooltip: "إضافة/خصم أيام",
+      tooltip: 'add_deduct_days'.tr(context),
       onPressed: () {
         final TextEditingController controller = TextEditingController();
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text("إضافة/خصم أيام"),
+            title: Text('add_deduct_days'.tr(context)),
             content: TextField(
               controller: controller,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "عدد الأيام (سالب للخصم)",
-                hintText: "مثال: 5 أو -5",
+              decoration: InputDecoration(
+                labelText: 'number_of_days_hint'.tr(context),
+                hintText: 'days_example_hint'.tr(context),
               ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("إلغاء"),
+                child: Text('cancel_btn'.tr(context)),
               ),
               ElevatedButton(
                 onPressed: () async {
                   final messenger = ScaffoldMessenger.of(context);
                   final int? days = int.tryParse(controller.text);
+                  final daysAddedDeductedMsg = 'days_added_deducted'.tr(
+                    context,
+                  );
+                  final addedWord = 'added_word'.tr(context);
+                  final deductedWord = 'deducted_word'.tr(context);
+                  final updateFailedMsg = 'update_failed_check_internet'.tr(
+                    context,
+                  );
+
                   if (days != null) {
                     Navigator.pop(context);
                     try {
@@ -898,7 +978,12 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                         messenger.showSnackBar(
                           SnackBar(
                             content: Text(
-                              "تم ${days > 0 ? 'إضافة' : 'خصم'} $days يوم",
+                              daysAddedDeductedMsg
+                                  .replaceFirst(
+                                    '%s',
+                                    days > 0 ? addedWord : deductedWord,
+                                  )
+                                  .replaceFirst('%s', '${days.abs()}'),
                             ),
                           ),
                         );
@@ -907,15 +992,13 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                     } catch (e) {
                       if (mounted) {
                         messenger.showSnackBar(
-                          const SnackBar(
-                            content: Text("فشل العملية: تأكد من الإنترنت"),
-                          ),
+                          SnackBar(content: Text(updateFailedMsg)),
                         );
                       }
                     }
                   }
                 },
-                child: const Text("تطبيق"),
+                child: Text('save_btn'.tr(context)),
               ),
             ],
           ),
@@ -927,19 +1010,17 @@ class _SuperAdminPageState extends State<SuperAdminPage>
   Widget _buildCancelButton(String groupId) {
     return IconButton(
       icon: const Icon(Icons.delete_forever, color: Colors.red),
-      tooltip: "إلغاء الاشتراك",
+      tooltip: 'cancel_subscription_btn'.tr(context),
       onPressed: () {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text("تأكيد إلغاء الاشتراك"),
-            content: const Text(
-              "هل أنت متأكد من رغبتك في إلغاء هذا الاشتراك؟ سيتم تعيين الحالة إلى منتهي فوراً.",
-            ),
+            title: Text('confirm_cancel_subscription'.tr(context)),
+            content: Text('cancel_subscription_warning'.tr(context)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("تراجع"),
+                child: Text('back_btn'.tr(context)),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -948,23 +1029,25 @@ class _SuperAdminPageState extends State<SuperAdminPage>
                   Navigator.pop(context);
                   try {
                     await _subscriptionService.cancelSubscription(groupId);
-                    if (mounted) {
-                      messenger.showSnackBar(
-                        const SnackBar(content: Text("تم إلغاء الاشتراك")),
-                      );
-                      _fetchGroups(showLoading: false);
-                    }
+                    if (!context.mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('cancel_subscription_btn'.tr(context)),
+                      ),
+                    );
+                    _fetchGroups(showLoading: false);
                   } catch (e) {
-                    if (mounted) {
-                      messenger.showSnackBar(
-                        const SnackBar(
-                          content: Text("فشل الإلغاء: تأكد من الإنترنت"),
+                    if (!context.mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'update_failed_check_internet'.tr(context),
                         ),
-                      );
-                    }
+                      ),
+                    );
                   }
                 },
-                child: const Text("إلغاء الاشتراك"),
+                child: Text('cancel_subscription_btn'.tr(context)),
               ),
             ],
           ),
@@ -1012,7 +1095,9 @@ class _DeleteConfirmationDialogState extends State<_DeleteConfirmationDialog> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              "حذف المنظومة بالكامل (${widget.groupName})",
+              'delete_system_title'
+                  .tr(context)
+                  .replaceFirst('%s', widget.groupName),
               style: const TextStyle(
                 color: Colors.red,
                 fontWeight: FontWeight.bold,
@@ -1027,23 +1112,23 @@ class _DeleteConfirmationDialogState extends State<_DeleteConfirmationDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const Text(
-              "تحذير: هذا الإجراء سيقوم بحذف جميع البيانات (الطلاب، الخدام، السجلات، الحسابات) نهائياً ولا يمكن استرجاعها.",
+            Text(
+              'delete_system_warning_msg'.tr(context),
               textAlign: TextAlign.right,
-              style: TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 20),
-            const Text(
-              "لتأكيد الحذف النهائي، اكتب (حذف نهائي):",
+            Text(
+              'type_final_delete_to_confirm'.tr(context),
               textAlign: TextAlign.right,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _passwordController,
               textAlign: TextAlign.center,
               decoration: InputDecoration(
-                hintText: "اكتب 'حذف نهائي' هنا",
+                hintText: 'type_final_delete_hint'.tr(context),
                 fillColor: Colors.red.shade50,
                 filled: true,
                 border: OutlineInputBorder(
@@ -1077,16 +1162,19 @@ class _DeleteConfirmationDialogState extends State<_DeleteConfirmationDialog> {
       actions: [
         TextButton(
           onPressed: _isDeleting ? null : () => Navigator.pop(context),
-          child: const Text("إلغاء"),
+          child: Text('cancel_btn'.tr(context)),
         ),
         ElevatedButton(
           onPressed: _isDeleting
               ? null
               : () async {
                   final messenger = ScaffoldMessenger.of(context);
-                  if (_passwordController.text != "حذف نهائي") {
+                  if (_passwordController.text !=
+                      'final_delete_confirmation_text'.tr(context)) {
                     messenger.showSnackBar(
-                      const SnackBar(content: Text("النص غير مطابق!")),
+                      SnackBar(
+                        content: Text('text_does_not_match'.tr(context)),
+                      ),
                     );
                     return;
                   }
@@ -1109,7 +1197,7 @@ class _DeleteConfirmationDialogState extends State<_DeleteConfirmationDialog> {
               borderRadius: BorderRadius.circular(12),
             ),
           ),
-          child: const Text("تأكيد الحذف النهائي"),
+          child: Text('confirm_final_delete_btn'.tr(context)),
         ),
       ],
     );

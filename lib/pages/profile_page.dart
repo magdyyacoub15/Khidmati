@@ -12,6 +12,12 @@ import '../services/settings_service.dart';
 import '../services/notification_service.dart';
 import '../services/data_cache_service.dart'; // 🚀 Added Cache Service
 import '../services/user_service.dart';
+import '../services/language_service.dart';
+import '../services/sync_service.dart'; // 🚀 Added Sync Service
+import '../l10n/app_translations.dart';
+import 'tutorial_video_page.dart';
+import 'points_type_selector_page.dart';
+import 'curriculums_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -147,7 +153,7 @@ class _ProfilePageState extends State<ProfilePage>
 
   void _showGlobalBroadcastDialog(BuildContext context) {
     final TextEditingController titleController = TextEditingController(
-      text: "إعلان عام من الإدارة 📢",
+      text: 'global_broadcast_title'.tr(context),
     );
     final TextEditingController bodyController = TextEditingController();
     bool isLoading = false;
@@ -159,8 +165,8 @@ class _ProfilePageState extends State<ProfilePage>
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-          title: const Text(
-            "إرسال إشعار لجميع مستخدمي التطبيق",
+          title: Text(
+            'global_broadcast_desc'.tr(context),
             textAlign: TextAlign.right,
           ),
           content: SingleChildScrollView(
@@ -170,14 +176,18 @@ class _ProfilePageState extends State<ProfilePage>
                 TextField(
                   controller: titleController,
                   textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: "عنوان الرسالة"),
+                  decoration: InputDecoration(
+                    labelText: 'msg_title_label'.tr(context),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: bodyController,
                   textAlign: TextAlign.right,
                   maxLines: 3,
-                  decoration: const InputDecoration(labelText: "نص الرسالة"),
+                  decoration: InputDecoration(
+                    labelText: 'msg_body_label'.tr(context),
+                  ),
                 ),
               ],
             ),
@@ -185,7 +195,7 @@ class _ProfilePageState extends State<ProfilePage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("إلغاء"),
+              child: Text('cancel_btn'.tr(context)),
             ),
             if (isLoading)
               const CircularProgressIndicator()
@@ -203,9 +213,9 @@ class _ProfilePageState extends State<ProfilePage>
                     if (context.mounted) {
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
+                        SnackBar(
                           content: Text(
-                            "🚀 تم إرسال الإشعار لجميع المستخدمين بنجاح",
+                            'send_success'.tr(context),
                             textAlign: TextAlign.right,
                           ),
                           backgroundColor: Colors.green,
@@ -216,13 +226,19 @@ class _ProfilePageState extends State<ProfilePage>
                     if (context.mounted) {
                       setState(() => isLoading = false);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("❌ فشل الإرسال: $e")),
+                        SnackBar(
+                          content: Text(
+                            'send_failed'
+                                .tr(context)
+                                .replaceFirst('%s', e.toString()),
+                          ),
+                        ),
                       );
                     }
                   }
                 },
                 icon: const Icon(Icons.send),
-                label: const Text("إرسال الآن"),
+                label: Text('send_now_btn'.tr(context)),
               ),
           ],
         ),
@@ -240,11 +256,11 @@ class _ProfilePageState extends State<ProfilePage>
           children: [
             const Icon(Icons.info_outline, color: Color(0xFF0277BD)),
             const SizedBox(width: 10),
-            const Flexible(
+            Flexible(
               child: Text(
-                "عن التطبيق والأمان",
+                'about_security_title'.tr(context),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -254,35 +270,38 @@ class _ProfilePageState extends State<ProfilePage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text(
-                "تطبيق خدمتي لإدارة المجموعات ومتابعة الحضور والغياب والأنشطة المختلفة بشكل سهل ومنظم.",
+              Text(
+                'about_app_desc'.tr(context),
                 textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const Divider(height: 30),
               _buildSecurityPoint(
-                "تشفير SSL/TLS",
-                "جميع البيانات يتم نقلها من وإلى التطبيق تحت بروتوكولات تشفير عالمية لضمان عدم اعتراضها.",
+                'ssl_tls'.tr(context),
+                'ssl_tls_desc'.tr(context),
               ),
               const SizedBox(height: 12),
               _buildSecurityPoint(
-                "حماية التطبيق ",
-                "تُخزن البيانات في خوادم مؤمنة بأعلى المعايير الأمنية والحواجز النارية.",
+                'app_protection'.tr(context),
+                'app_protection_desc'.tr(context),
               ),
               const SizedBox(height: 12),
               _buildSecurityPoint(
-                "تشفير كلمات المرور",
-                "لا يتم تخزين كلمات المرور كنصوص عادية، بل يتم تجزئتها وتشفيرها بشكل آمن.",
+                'password_encryption'.tr(context),
+                'password_encryption_desc'.tr(context),
               ),
               const SizedBox(height: 12),
               _buildSecurityPoint(
-                "أمان الصور والملفات",
-                "تُعالج الصور عبر روابط آمنة (HTTPS) لضمان الخصوصية وسرعة الوصول.",
+                'media_security'.tr(context),
+                'media_security_desc'.tr(context),
               ),
               const SizedBox(height: 12),
               _buildSecurityPoint(
-                "حماية بيانات المجموعة",
-                "نظام رادع يمنع دخول أي مستخدم للمجموعة أو رؤية البيانات (حالات، إحصائيات، طلاب) إلا بعد مراجعة وقبول يدوي من مدير المجموعة (Admin)، مع تحديث لحظي للصلاحيات بمجرد الموافقة.",
+                'group_data_protection'.tr(context),
+                'group_data_protection_desc'.tr(context),
               ),
             ],
           ),
@@ -290,9 +309,9 @@ class _ProfilePageState extends State<ProfilePage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              "إغلاق",
-              style: TextStyle(fontWeight: FontWeight.bold),
+            child: Text(
+              'close'.tr(context),
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -355,21 +374,21 @@ class _ProfilePageState extends State<ProfilePage>
 
   void _showFontSizeDialog(BuildContext context, double currentMultiplier) {
     final Map<String, double> sizes = {
-      "صغير": 0.8,
-      "عادي": 1.0,
-      "متوسط": 1.2,
-      "كبير": 1.4,
-      "كبير جداً": 1.6,
+      'font_size_small'.tr(context): 0.8,
+      'font_size_normal'.tr(context): 1.0,
+      'font_size_medium'.tr(context): 1.2,
+      'font_size_large'.tr(context): 1.4,
+      'font_size_xl'.tr(context): 1.6,
     };
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          "اختر حجم الخط مناسب لك",
+        title: Text(
+          'select_font_size_title'.tr(context),
           textAlign: TextAlign.right,
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -395,6 +414,75 @@ class _ProfilePageState extends State<ProfilePage>
           }).toList(),
         ),
       ),
+    );
+  }
+
+  void _showLanguageDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'select_language'.tr(context),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildLanguageTile('ar', 'arabic'.tr(context), context),
+                const Divider(),
+                _buildLanguageTile('en', 'english'.tr(context), context),
+                const Divider(),
+                _buildLanguageTile('fr', 'Français (French)', context),
+                const Divider(),
+                _buildLanguageTile('es', 'Español (Spanish)', context),
+                const Divider(),
+                _buildLanguageTile('de', 'Deutsch (German)', context),
+                const Divider(),
+                _buildLanguageTile('it', 'Italiano (Italian)', context),
+                const Divider(),
+                _buildLanguageTile('pt', 'Português (Portuguese)', context),
+                const Divider(),
+                _buildLanguageTile('nl', 'Nederlands (Dutch)', context),
+                const Divider(),
+                _buildLanguageTile('ru', 'Русский (Russian)', context),
+                const Divider(),
+                _buildLanguageTile('pl', 'Polski (Polish)', context),
+                const Divider(),
+                _buildLanguageTile('sv', 'Svenska (Swedish)', context),
+                const Divider(),
+                _buildLanguageTile('el', 'Ελληνικά (Greek)', context),
+                const Divider(),
+                _buildLanguageTile('uk', 'Українська (Ukrainian)', context),
+                const Divider(),
+                _buildLanguageTile('ro', 'Română (Romanian)', context),
+                const Divider(),
+                _buildLanguageTile('cs', 'Čeština (Czech)', context),
+                const Divider(),
+                _buildLanguageTile('hu', 'Magyar (Hungarian)', context),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLanguageTile(
+    String langCode,
+    String label,
+    BuildContext context,
+  ) {
+    return ListTile(
+      title: Text(label, textAlign: TextAlign.center),
+      onTap: () {
+        LanguageService().changeLanguage(langCode);
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -483,295 +571,476 @@ class _ProfilePageState extends State<ProfilePage>
     }
 
     // Default values if data load failed
-    final String displayName = _cachedUserData?['username'] ?? "مستخدم";
+    final String displayName =
+        _cachedUserData?['username'] ?? 'user_label'.tr(context);
     final String email = _cachedUserData?['email'] ?? "";
     final String role = _cachedUserData?['role'] ?? "user";
     final String? groupId = _cachedUserData?['groupId'];
     final String? userId = _cachedUserData?['id'];
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          _buildPremiumBackground(),
-          SafeArea(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 20,
-                      horizontal: 16,
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Centered Title with padding to avoid icons
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 50),
-                          child: Text(
-                            "حسابي",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        // Action Icons vertically on the right
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
+    return ValueListenableBuilder<String>(
+      valueListenable: LanguageService().currentLocale,
+      builder: (context, locale, child) {
+        return Scaffold(
+          body: Stack(
+            children: [
+              _buildPremiumBackground(),
+              SafeArea(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 800),
+                    child: RefreshIndicator(
+                      onRefresh: _loadUserData,
+                      child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          Stack(
                             children: [
-                              ValueListenableBuilder<double>(
-                                valueListenable:
-                                    SettingsService().fontSizeMultiplier,
-                                builder: (context, currentMultiplier, _) {
-                                  return IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    icon: const Icon(
-                                      Icons.format_size,
-                                      color: Colors.white,
-                                      size: 22,
+                              // 🚀 User Info Section (Centered)
+                              SizedBox(
+                                width: double.infinity,
+                                child: Column(
+                                  children: [
+                                    const SizedBox(height: 40),
+                                    const CircleAvatar(
+                                      radius: 50,
+                                      backgroundColor: Colors.white24,
+                                      child: Icon(
+                                        Icons.person,
+                                        size: 60,
+                                        color: Colors.white,
+                                      ),
                                     ),
-                                    onPressed: () => _showFontSizeDialog(
-                                      context,
-                                      currentMultiplier,
+                                    const SizedBox(height: 20),
+                                    Text(
+                                      displayName,
+                                      style: const TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
                                     ),
-                                    tooltip: "حجم الخط",
-                                  );
-                                },
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 12.0),
+                                      child: Text(
+                                        email,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              IconButton(
-                                visualDensity: VisualDensity.compact,
-                                icon: const Icon(
-                                  Icons.groups,
-                                  color: Colors.white,
-                                  size: 22,
+                              // Action Icons (Positioned at far right)
+                              Positioned(
+                                right: 16,
+                                top: 10,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    ValueListenableBuilder<double>(
+                                      valueListenable:
+                                          SettingsService().fontSizeMultiplier,
+                                      builder: (context, currentMultiplier, _) {
+                                        return IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          icon: const Icon(
+                                            Icons.format_size,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          onPressed: () => _showFontSizeDialog(
+                                            context,
+                                            currentMultiplier,
+                                          ),
+                                          tooltip: 'font_size'.tr(context),
+                                        );
+                                      },
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(
+                                        Icons.language,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                      onPressed: () =>
+                                          _showLanguageDialog(context),
+                                      tooltip: 'change_language'.tr(context),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(
+                                        Icons.groups,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                      onPressed: () {
+                                        if (userId != null) {
+                                          _showGroupsDialog(context, userId);
+                                        }
+                                      },
+                                      tooltip: 'my_groups'.tr(context),
+                                    ),
+                                    if (email == 'magdyyacoub41@gmail.com')
+                                      IconButton(
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.campaign_rounded,
+                                          color: Colors.orangeAccent,
+                                          size: 20,
+                                        ),
+                                        onPressed: () =>
+                                            _showGlobalBroadcastDialog(context),
+                                        tooltip: 'global_notification'.tr(
+                                          context,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(
+                                        Icons.info_outline,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                      onPressed: () => _showInfoDialog(context),
+                                      tooltip: 'about_app'.tr(context),
+                                    ),
+                                  ],
                                 ),
-                                onPressed: () {
-                                  if (userId != null) {
-                                    _showGroupsDialog(context, userId);
-                                  }
-                                },
-                                tooltip: "مجموعاتي",
-                              ),
-                              if (email == 'magdyyacoub41@gmail.com')
-                                IconButton(
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(
-                                    Icons.campaign_rounded,
-                                    color: Colors.orangeAccent,
-                                    size: 22,
-                                  ),
-                                  onPressed: () =>
-                                      _showGlobalBroadcastDialog(context),
-                                  tooltip: "إرسال إشعار عالمي",
-                                ),
-                              IconButton(
-                                visualDensity: VisualDensity.compact,
-                                icon: const Icon(
-                                  Icons.info_outline,
-                                  color: Colors.white,
-                                  size: 22,
-                                ),
-                                onPressed: () => _showInfoDialog(context),
-                                tooltip: "عن التطبيق",
                               ),
                             ],
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 🚀 User Info Section (Using Cached Data)
-                  Column(
-                    children: [
-                      const CircleAvatar(
-                        radius: 50,
-                        backgroundColor: Colors.white24,
-                        child: Icon(
-                          Icons.person,
-                          size: 60,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        displayName,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: Text(
-                          email,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      const SizedBox(height: 20),
+                          const SizedBox(height: 30),
 
-                      const SizedBox(height: 20),
-
-                      // Contact Us Section
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.2),
+                          // Contact Us Section
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24.0,
                             ),
-                          ),
-                          child: Column(
-                            children: [
-                              const Text(
-                                "تواصل معنا",
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(15),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.2),
                                 ),
                               ),
-                              const SizedBox(height: 16),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
+                              child: Column(
                                 children: [
-                                  _buildSocialButton(
-                                    icon: Icons.chat_bubble_outline,
-                                    label: "واتساب",
-                                    color: Colors.green.shade400,
-                                    onTap: () => _launchURL(
-                                      "https://wa.me/qr/PVCRF6JDXXLVD1",
+                                  Text(
+                                    'contact_us'.tr(context),
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
                                     ),
                                   ),
-                                  _buildSocialButton(
-                                    icon: Icons.send,
-                                    label: "تليجرام",
-                                    color: Colors.blue.shade400,
-                                    onTap: () => _launchURL(
-                                      "https://t.me/+Eql6H_Ebm_4wMWFk",
-                                    ),
-                                  ),
-                                  _buildSocialButton(
-                                    icon: Icons.camera_alt_outlined,
-                                    label: "إنستجرام",
-                                    color: Colors.pink.shade400,
-                                    onTap: () => _launchURL(
-                                      "https://www.instagram.com/magdyyacoub0?igsh=MXFyb2ZwcjJtbGNwYg==",
-                                    ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      _buildSocialButton(
+                                        icon: Icons.chat_bubble_outline,
+                                        label: 'whatsapp'.tr(context),
+                                        color: Colors.green.shade400,
+                                        onTap: () => _launchURL(
+                                          "https://wa.me/qr/PVCRF6JDXXLVD1",
+                                        ),
+                                      ),
+                                      _buildSocialButton(
+                                        icon: Icons.camera_alt_outlined,
+                                        label: 'instagram'.tr(context),
+                                        color: Colors.pink.shade400,
+                                        onTap: () => _launchURL(
+                                          "https://www.instagram.com/magdyyacoub0?igsh=MXFyb2ZwcjJtbGNwYg==",
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-                      // Subscription Button
-                      if (role != 'user' && groupId != null)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24.0,
-                            vertical: 10,
-                          ),
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      SubscriptionPage(groupId: groupId),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.star, color: Colors.blue),
-                            label: const Text("الاشتراكات"),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
-                              minimumSize: const Size(double.infinity, 50),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
+
+                          const SizedBox(height: 30),
+
+                          // جروب التطبيق Section
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24.0,
+                            ),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(15),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.2),
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'app_group'.tr(context),
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      _buildSocialButton(
+                                        icon: Icons.chat_bubble_outline,
+                                        label: 'official_whatsapp'.tr(context),
+                                        color: Colors.green.shade400,
+                                        onTap: () => _launchURL(
+                                          "https://chat.whatsapp.com/LcWrv2ocEtPB74oLbIaAUW?mode=hq1tcla",
+                                        ),
+                                      ),
+                                      _buildSocialButton(
+                                        icon: Icons.send,
+                                        label: 'official_telegram'.tr(context),
+                                        color: Colors.blue.shade400,
+                                        onTap: () => _launchURL(
+                                          "https://t.me/+Eql6H_Ebm_4wMWFk",
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                        ),
-
-                      // Super Admin Button
-                      if (email == 'magdyyacoub41@gmail.com')
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24.0,
-                            vertical: 10,
-                          ),
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const SuperAdminPage(),
+                          // Subscription Button
+                          if (role != 'user' && groupId != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                                vertical: 15,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          SubscriptionPage(groupId: groupId),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(
+                                  Icons.star,
+                                  color: Colors.blue,
                                 ),
-                              );
-                            },
-                            icon: const Icon(
-                              Icons.admin_panel_settings,
-                              color: Colors.red,
+                                label: Text(
+                                  'subscriptions'.tr(context),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.black,
+                                  minimumSize: const Size(double.infinity, 50),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                ),
+                              ),
                             ),
-                            label: const Text("لوحة تحكم المشرف العام"),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
-                              minimumSize: const Size(double.infinity, 50),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(15),
+
+                          // Tutorial Video Button (Matched Styling)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24.0,
+                              vertical: 15,
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const TutorialVideoPage(),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(
+                                Icons.play_circle_fill,
+                                color: Colors.redAccent,
+                                size: 28,
+                              ),
+                              label: Text(
+                                'tutorial_video_btn'.tr(context),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.black,
+                                minimumSize: const Size(double.infinity, 50),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
                               ),
                             ),
                           ),
-                        ),
 
-                      const SizedBox(height: 32),
+                          // Points System Button
+                          if (groupId != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                                vertical: 15,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const PointsTypeSelectorPage(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(
+                                  Icons.stars,
+                                  color: Colors.orange,
+                                  size: 28,
+                                ),
+                                label: const Text(
+                                  'نظام النقاط',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.black,
+                                  minimumSize: const Size(double.infinity, 50),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                ),
+                              ),
+                            ),
 
-                      ElevatedButton.icon(
-                        onPressed: () => _signOut(),
-                        icon: const Icon(Icons.logout),
-                        label: const Text("تسجيل الخروج"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red.shade400,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
+                          // المناهج والكرازة Button
+                          if (groupId != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                                vertical: 15,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const CurriculumsPage(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(
+                                  Icons.menu_book_rounded,
+                                  color: Colors.purpleAccent,
+                                  size: 28,
+                                ),
+                                label: const Text(
+                                  'المناهج والكرازة',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.black,
+                                  minimumSize: const Size(double.infinity, 50),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          // Super Admin Button
+                          if (email == 'magdyyacoub41@gmail.com')
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                                vertical: 15,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const SuperAdminPage(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(
+                                  Icons.admin_panel_settings,
+                                  color: Colors.red,
+                                ),
+                                label: Text('super_admin_panel'.tr(context)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.black,
+                                  minimumSize: const Size(double.infinity, 50),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          const SizedBox(height: 32),
+
+                          ElevatedButton.icon(
+                            onPressed: () => _signOut(),
+                            icon: const Icon(Icons.logout),
+                            label: Text('logout'.tr(context)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red.shade400,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
+                          const SizedBox(height: 32),
+
+                          // 🛠️ Debugging Section
+                        ],
                       ),
-                      const SizedBox(height: 32),
-
-                      // 🛠️ Debugging Section
-                    ],
+                      ),
+                    ),
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -817,7 +1086,9 @@ class _GroupsManagerDialog extends StatefulWidget {
 
 class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
   bool _isLoading = true;
+  bool _isSwitchingGroup = false; // Add state for group switching loading
   List<models.Document> _memberships = [];
+  String? _activeGroupId; // 🚀 Added to track active group
   final TextEditingController _joinCodeController = TextEditingController();
   // Cloud Function removed in favor of Admin Approval flow
 
@@ -827,7 +1098,8 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
     _loadMemberships();
   }
 
-  Future<void> _loadMemberships() async {
+  Future<void> _loadMemberships({bool isRetry = false}) async {
+    final String unnamedGroupMsg = 'unnamed_group'.tr(context);
     try {
       final membershipResult = await widget.databases.listDocuments(
         databaseId: AppwriteService.databaseId,
@@ -847,7 +1119,7 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
           queries: [Query.equal('groupId', groupIds)],
         );
         for (var g in groupsResult.documents) {
-          final serviceName = g.data['serviceName'] ?? 'بدون اسم';
+          final serviceName = g.data['serviceName'] ?? unnamedGroupMsg;
           final stageName = g.data['churchName'] ?? '';
           groupNames[g.data['groupId']] = stageName.isNotEmpty
               ? "$serviceName - $stageName"
@@ -862,6 +1134,12 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
         documentId: widget.userId,
       );
       final primaryGroupId = userDoc.data['groupId'] ?? '';
+
+      if (mounted) {
+        setState(() {
+          _activeGroupId = primaryGroupId;
+        });
+      }
 
       if (primaryGroupId.isNotEmpty && !groupIds.contains(primaryGroupId)) {
         debugPrint(
@@ -878,8 +1156,14 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
             'joinedAt': DateTime.now().toIso8601String(),
           },
         );
-        // Reload once to include the new membership
-        return _loadMemberships();
+        // Reload once to include the new membership, but prevent infinite loops
+        if (!isRetry) {
+          return _loadMemberships(isRetry: true);
+        } else {
+          debugPrint(
+            "Self-healing failed to reflect immediately. Proceeding anyway.",
+          );
+        }
       }
 
       if (mounted) {
@@ -898,7 +1182,12 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
   Map<String, String> _groupNamesMap = {};
 
   Future<void> _switchGroup(String groupId) async {
-    setState(() => _isLoading = true);
+    setState(() => _isSwitchingGroup = true); // Use new state
+    final String noMembershipFoundMsg = 'no_membership_found'.tr(context);
+    final String groupPendingApprovalMsg = 'group_pending_admin_approval'.tr(
+      context,
+    );
+    final String switchErrorMsg = 'switch_error'.tr(context);
     try {
       // 1. Fetch role for this group from memberships (using Query instead of direct ID)
       final membershipRes = await widget.databases.listDocuments(
@@ -911,7 +1200,7 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
       );
 
       if (membershipRes.total == 0) {
-        throw Exception("لم يتم العثور على عضوية لهذه المجموعة");
+        throw Exception(noMembershipFoundMsg);
       }
 
       final membership = membershipRes.documents.first;
@@ -919,26 +1208,145 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
       final status = membership.data['status'] ?? 'approved';
 
       if (status == 'pending') {
-        throw Exception("عذراً، هذه المجموعة بانتظار موافقة الأدمن.");
+        throw Exception(groupPendingApprovalMsg);
       }
 
-      // 2. Update user doc with groupId AND role
+      // 2. Fetch teamId from Group document
+      final groupDoc = await widget.databases.getDocument(
+        databaseId: AppwriteService.databaseId,
+        collectionId: AppwriteService.groupsCollectionId,
+        documentId: groupId,
+      );
+      final teamId = groupDoc.data['teamId'] ?? '';
+
+      // 3. Update user doc with groupId AND role
       await widget.databases.updateDocument(
         databaseId: AppwriteService.databaseId,
         collectionId: AppwriteService.usersCollectionId,
         documentId: widget.userId,
         data: {'groupId': groupId, 'role': role},
       );
+
+      // 4. Update Cache IMMEDIATELY
+      await DataCacheService().cacheUserGroupId(
+        widget.userId,
+        groupId,
+        teamId,
+        role,
+      );
+
       if (mounted) Navigator.pop(context);
     } catch (e) {
       debugPrint("Error switching group: $e");
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("خطأ في التبديل: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(switchErrorMsg.replaceFirst('%s', e.toString())),
+          ),
+        );
+        setState(
+          () => _isSwitchingGroup = false,
+        ); // Stop loading indicator on error
+      }
+    }
+  }
+
+  void _confirmSwitchWithPendingOps(String groupId) async {
+    final hasOps = await DataCacheService().hasPendingOperations(
+      _activeGroupId,
+    );
+    if (!hasOps) {
+      _switchGroup(groupId);
+      return;
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            const SizedBox(width: 8),
+            Text('pending_sync_warning'.tr(context)),
+          ],
+        ),
+        content: Text('pending_sync_message'.tr(context)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              SyncService().syncAll(_activeGroupId ?? '');
+            },
+            child: Text('sync_now'.tr(context)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              _switchGroup(groupId);
+            },
+            child: Text('switch_anyway'.tr(context)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteMembership(String membershipId, String gid) async {
+    setState(() => _isLoading = true);
+    try {
+      await widget.databases.deleteDocument(
+        databaseId: AppwriteService.databaseId,
+        collectionId: AppwriteService.membershipsCollectionId,
+        documentId: membershipId,
+      );
+      // Refresh list
+      await _loadMemberships(isRetry: true);
+    } catch (e) {
+      debugPrint("Error deleting membership: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'leave_group_error'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _showLeaveConfirmation(String membershipId, String gid, String gname) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('confirm_leave_group_title'.tr(context)),
+        content: Text('confirm_leave_group_message'.tr(context)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('cancel_btn'.tr(context)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteMembership(membershipId, gid);
+            },
+            child: Text('leave_group_btn'.tr(context)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _joinNewGroup() async {
@@ -946,6 +1354,10 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
     if (code.isEmpty) return;
 
     setState(() => _isLoading = true);
+    final String invalidGroupCodeMsg = 'invalid_group_code'.tr(context);
+    final String alreadyMemberMsg = 'already_member_or_pending'.tr(context);
+    final String joinRequestSentMsg = 'join_request_sent'.tr(context);
+
     try {
       // 1. Validate Code
       final groups = await widget.databases.listDocuments(
@@ -955,7 +1367,7 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
       );
 
       if (groups.total == 0) {
-        throw Exception("كود المجموعة غير صحيح");
+        throw Exception(invalidGroupCodeMsg);
       }
 
       final group = groups.documents.first;
@@ -972,7 +1384,7 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
       );
 
       if (existing.total > 0) {
-        throw Exception("أنت بالفعل عضو في هذه المجموعة أو بانتظار الموافقة");
+        throw Exception(alreadyMemberMsg);
       }
 
       // 3. Create Pending Membership
@@ -998,8 +1410,8 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ تم إرسال الطلب! بانتظار موافقة أدمن المجموعة."),
+          SnackBar(
+            content: Text(joinRequestSentMsg),
             backgroundColor: Colors.orange,
           ),
         );
@@ -1010,7 +1422,7 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text("$e")));
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -1020,100 +1432,172 @@ class _GroupsManagerDialogState extends State<_GroupsManagerDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text(
-        "مجموعاتي",
+      title: Text(
+        'my_groups'.tr(context),
         textAlign: TextAlign.right,
-        style: TextStyle(fontWeight: FontWeight.bold),
+        style: const TextStyle(fontWeight: FontWeight.bold),
       ),
       content: _isLoading
           ? const SizedBox(
               height: 100,
               child: Center(child: CircularProgressIndicator()),
             )
-          : SizedBox(
-              width: double.maxFinite,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.6,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ..._memberships.map((m) {
-                        final gid = m.data['groupId'];
-                        final name = _groupNamesMap[gid] ?? 'جاري التحميل...';
-                        final status = m.data['status'] ?? 'approved';
-                        final isPending = status == 'pending';
+          : Stack(
+              children: [
+                SizedBox(
+                  width: double.maxFinite,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.6,
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ..._memberships.map((m) {
+                            final gid = m.data['groupId'];
+                            final mid = m.$id;
+                            final name =
+                                _groupNamesMap[gid] ??
+                                'loading_data'.tr(context);
+                            final status = m.data['status'] ?? 'approved';
+                            final isPending = status == 'pending';
 
-                        return ListTile(
-                          title: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              if (isPending)
-                                Container(
-                                  margin: const EdgeInsets.only(left: 10),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange.shade100,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    "قيد الانتظار",
-                                    style: TextStyle(
-                                      color: Colors.orange.shade900,
-                                      fontSize: 10,
+                            // Check if this is the active group
+                            final bool isActive = _activeGroupId == gid;
+
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              leading: Icon(
+                                isPending ? Icons.hourglass_top : Icons.church,
+                                color: isPending
+                                    ? Colors.orange
+                                    : (isActive ? Colors.green : Colors.blue),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red,
+                                ),
+                                onPressed: isActive
+                                    ? () {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'cannot_leave_active_group'.tr(
+                                                context,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    : () => _showLeaveConfirmation(
+                                        mid,
+                                        gid,
+                                        name,
+                                      ),
+                              ),
+                              title: Wrap(
+                                alignment: WrapAlignment.end,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                textDirection: TextDirection.rtl,
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: [
+                                  Text(
+                                    name,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                ),
-                              Text(
-                                name,
+                                  if (isPending)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.shade100,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        'pending_status'.tr(context),
+                                        style: TextStyle(
+                                          color: Colors.orange.shade900,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              subtitle: Text(
+                                "ID: $gid",
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                  color: Colors.grey,
                                 ),
                               ),
-                            ],
-                          ),
-                          subtitle: Text(
-                            "ID: $gid",
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey,
+                              onTap: isActive || isPending
+                                  ? null
+                                  : () => _confirmSwitchWithPendingOps(gid),
+                            );
+                          }),
+                          const Divider(),
+                          TextField(
+                            controller: _joinCodeController,
+                            decoration: InputDecoration(
+                              hintText: 'new_join_code_hint'.tr(context),
+                              prefixIcon: const Icon(Icons.add),
                             ),
+                            textAlign: TextAlign.right,
                           ),
-                          leading: Icon(
-                            isPending ? Icons.hourglass_top : Icons.church,
-                            color: isPending ? Colors.orange : Colors.blue,
-                          ),
-                          onTap: isPending ? null : () => _switchGroup(gid),
-                        );
-                      }),
-                      const Divider(),
-                      TextField(
-                        controller: _joinCodeController,
-                        decoration: const InputDecoration(
-                          hintText: "كود الانضمام الجديد",
-                          prefixIcon: Icon(Icons.add),
-                        ),
-                        textAlign: TextAlign.right,
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                // Add Loading Indicator Overlay
+                if (_isSwitchingGroup)
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.white.withAlpha(150),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 10),
+                            Text(
+                              'switching_group_msg'.tr(context),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("إلغاء"),
+          onPressed: _isSwitchingGroup ? null : () => Navigator.pop(context),
+          child: Text('cancel_btn'.tr(context)),
         ),
-        ElevatedButton(onPressed: _joinNewGroup, child: const Text("انضمام")),
+        ElevatedButton(
+          onPressed: _isSwitchingGroup ? null : _joinNewGroup,
+          child: Text('join_btn'.tr(context)),
+        ),
       ],
     );
   }

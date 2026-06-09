@@ -3,19 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
-import 'dart:io';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
-import 'package:cached_network_image/cached_network_image.dart';
-
 import '../services/appwrite_service.dart';
 import '../services/grade_service.dart';
 import '../services/user_service.dart';
 import '../services/permission_service.dart';
 import '../services/data_cache_service.dart';
-import '../services/image_cache_service.dart';
 import '../models/kid.dart'; // ✅ Import Global Model
-import '../widgets/full_screen_image.dart';
 
 // ✅ Constants
 const String studentsCollectionId = "students";
@@ -45,7 +40,7 @@ class BirthdayKid {
   bool isBirthdayToday() => kid.isBirthdayToday();
 
   // Helper to get formatted phone with owner
-  String getPhoneWithOwner(String phone) => kid.getPhoneWithOwner(phone);
+  String getPhoneWithOwner(BuildContext context, String phone) => kid.getPhoneWithOwner(context, phone);
 
   Map<String, dynamic> toJson() {
     return {
@@ -91,7 +86,6 @@ class _BirthdaysPageState extends State<BirthdaysPage>
 
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
 
   RealtimeSubscription? _userSubscription;
@@ -117,7 +111,7 @@ class _BirthdaysPageState extends State<BirthdaysPage>
       vsync: this,
       duration: const Duration(seconds: 15),
     )..repeat();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _loadServerName();
     _loadUserData();
   }
@@ -158,11 +152,6 @@ class _BirthdaysPageState extends State<BirthdaysPage>
           );
           if (mounted) {
             _updateUserState(doc.data);
-            // 🚀 Trigger load immediately after network fetch
-            _fetchGradeOrder();
-            _fetchInitialData(forceRefresh: true);
-            _subscribeToData();
-            _subscribeToCongratulations();
           }
         }
       } catch (e) {
@@ -250,18 +239,23 @@ class _BirthdaysPageState extends State<BirthdaysPage>
 
       // 1. Try Cache
       if (!forceRefresh) {
+        debugPrint("🎂 Attempting to load from cache...");
         final cachedList = await DataCacheService().getCachedBirthdayList(
           _myGroupId,
         );
+        debugPrint("🎂 Cache returned ${cachedList.length} items");
+
         if (cachedList.isNotEmpty) {
           if (mounted) {
             setState(() {
+              // Filter out any corrupted entries
               _allKids = cachedList
                   .where((e) => e['kid'] != null)
                   .map((e) {
                     try {
                       return BirthdayKid.fromJson(e);
                     } catch (err) {
+                      debugPrint("🎂 Skipping corrupted cache entry: $err");
                       return null;
                     }
                   })
@@ -270,28 +264,36 @@ class _BirthdaysPageState extends State<BirthdaysPage>
               _isLoading = false;
             });
           }
-          // 🚀 Background refresh after loading cache
-          _fetchFreshData();
-          return;
+          debugPrint("🎂 Loaded ${_allKids.length} kids from cache");
+
+          // If cache was corrupted and empty, fetch fresh data
+          if (_allKids.isEmpty) {
+            debugPrint("🎂 Cache was corrupted, fetching fresh data...");
+            await DataCacheService().cacheBirthdayList(
+              _myGroupId,
+              [],
+            ); // Clear corrupted cache
+          } else {
+            // Fetch congratulations in background
+            _fetchCongratulations();
+            return;
+          }
         }
         debugPrint("🎂 Cache is empty, fetching from server...");
       }
 
-      await _fetchFreshData();
-    } catch (e) {
-      debugPrint("🎂 Error in _fetchInitialData: $e");
-      _handleError("بيانات", e);
-    }
-  }
-
-  Future<void> _fetchFreshData() async {
-    try {
-      debugPrint("🎂 Fetching fresh data from server...");
+      // 2. Fetch Fresh Data (Pagination Loop)
+      debugPrint("🎂 Fetching students...");
       final List<BirthdayKid> freshStudents = [];
       await _fetchCollection(studentsCollectionId, "مخدوم", freshStudents);
 
+      debugPrint("🎂 Fetching servants...");
       final List<BirthdayKid> freshServants = [];
       await _fetchCollection(servantsCollectionId, "خادم", freshServants);
+
+      debugPrint(
+        "🎂 Fetched ${freshStudents.length} students, ${freshServants.length} servants",
+      );
 
       if (mounted) {
         setState(() {
@@ -301,14 +303,19 @@ class _BirthdaysPageState extends State<BirthdaysPage>
         });
       }
 
+      // 3. Update Cache
       final allData = [
         ...freshStudents,
         ...freshServants,
       ].map((k) => k.toJson()).toList();
       await DataCacheService().cacheBirthdayList(_myGroupId, allData);
+
+      // Fetch Congratulations
       await _fetchCongratulations();
-    } catch (e) {
-      debugPrint("🎂 Error fetching fresh data: $e");
+    } catch (e, stackTrace) {
+      debugPrint("🎂 Error in _fetchInitialData: $e");
+      debugPrint("🎂 Stack trace: $stackTrace");
+      _handleError("بيانات", e);
     }
   }
 
@@ -477,11 +484,10 @@ class _BirthdaysPageState extends State<BirthdaysPage>
       final kid = _allKids[kidIndex];
       if (kid.birthDate == null) continue;
 
-      final localBirth = kid.birthDate!.toLocal();
       final birthdayThisYear = DateTime(
         now.year,
-        localBirth.month,
-        localBirth.day,
+        kid.birthDate!.month,
+        kid.birthDate!.day,
       );
 
       if (kid.isBirthdayToday()) {
@@ -1135,8 +1141,10 @@ class _BirthdaysPageState extends State<BirthdaysPage>
 
     return Scaffold(
       backgroundColor: const Color(0xFF0D47A1),
-      body: CustomScrollView(
-        slivers: [
+      body: RefreshIndicator(
+        onRefresh: () => _fetchInitialData(forceRefresh: true),
+        child: CustomScrollView(
+          slivers: [
           SliverAppBar(
             expandedHeight: MediaQuery.of(context).size.height * 0.25,
             floating: false,
@@ -1303,6 +1311,7 @@ class _BirthdaysPageState extends State<BirthdaysPage>
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -1444,58 +1453,23 @@ class _BirthdaysPageState extends State<BirthdaysPage>
                   children: [
                     Row(
                       children: [
-                        GestureDetector(
-                          onTap: () {
-                            if (kid.photoUrl != null ||
-                                kid.kid.localImagePath != null) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => FullScreenImage(
-                                    imageUrl: kid.photoUrl,
-                                    localPath: kid.kid.localImagePath,
-                                    tag: 'bday_${kid.id}',
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                          child: Hero(
-                            tag: 'bday_${kid.id}',
-                            child: CircleAvatar(
-                              radius: MediaQuery.of(context).size.width * 0.055,
-                              backgroundColor: isServant
-                                  ? Colors.purple.shade100
-                                  : Colors.blue.shade100,
-                              backgroundImage:
-                                  (kid.kid.localImagePath != null &&
-                                      kid.kid.localImagePath!.isNotEmpty)
-                                  ? FileImage(File(kid.kid.localImagePath!))
-                                  : ((kid.photoUrl != null &&
-                                                kid.photoUrl!.isNotEmpty)
-                                            ? CachedNetworkImageProvider(
-                                                kid.photoUrl!,
-                                                cacheManager:
-                                                    ImageCacheService.instance,
-                                              )
-                                            : null)
-                                        as ImageProvider?,
-                              child:
-                                  ((kid.photoUrl == null ||
-                                          kid.photoUrl!.isEmpty) &&
-                                      (kid.kid.localImagePath == null ||
-                                          kid.kid.localImagePath!.isEmpty))
-                                  ? Icon(
-                                      isServant ? Icons.person_pin : Icons.cake,
-                                      color: isServant
-                                          ? Colors.deepPurple
-                                          : Colors.pink,
-                                      size:
-                                          MediaQuery.of(context).size.width *
-                                          0.05,
-                                    )
-                                  : null,
+                        Container(
+                          width: MediaQuery.of(context).size.width * 0.11,
+                          height: MediaQuery.of(context).size.width * 0.11,
+                          decoration: BoxDecoration(
+                            color: isServant
+                                ? Colors.purple.shade100
+                                : Colors.blue.shade100,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isServant ? Colors.purple : Colors.blue,
+                              width: 2,
                             ),
+                          ),
+                          child: Icon(
+                            isServant ? Icons.person_pin : Icons.cake,
+                            color: isServant ? Colors.deepPurple : Colors.pink,
+                            size: MediaQuery.of(context).size.width * 0.05,
                           ),
                         ),
                         SizedBox(
@@ -1566,7 +1540,7 @@ class _BirthdaysPageState extends State<BirthdaysPage>
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: kid.kid.phones.map((phone) {
-                          final phoneWithOwner = kid.getPhoneWithOwner(phone);
+                          final phoneWithOwner = kid.getPhoneWithOwner(context, phone);
                           return Container(
                             margin: EdgeInsets.only(
                               bottom:

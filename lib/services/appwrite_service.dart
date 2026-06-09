@@ -10,6 +10,7 @@ class AppwriteService {
   late final Databases databases;
   late final Storage storage;
   late final Messaging messaging;
+  late final Realtime realtime;
 
   // ⚠️ يرجى استبدال هذه القيم ببيانات مشروعك
   static const String endpoint = 'https://fra.cloud.appwrite.io/v1';
@@ -21,6 +22,7 @@ class AppwriteService {
   static const String groupsCollectionId = 'groups';
   static const String appConfigCollectionId = 'app_config';
   static const String subscriptionPricesDocId = 'subscription_prices';
+  static const String attendanceBucketId = 'attendance_photos';
 
   void init() {
     client
@@ -32,5 +34,6 @@ class AppwriteService {
     databases = Databases(client);
     storage = Storage(client);
     messaging = Messaging(client);
+    realtime = Realtime(client);
   }
 }

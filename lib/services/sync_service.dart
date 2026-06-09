@@ -6,7 +6,7 @@ import 'data_cache_service.dart';
 import 'permission_service.dart';
 import 'image_service.dart';
 import 'status_service.dart';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import '../models/kid.dart';
 
 class SyncService {
@@ -24,6 +24,11 @@ class SyncService {
   // 🚀 Connectivity Listener
   Timer? _connectivityTimer;
   bool _isConnected = false;
+
+  // 🚀 Sync Events Stream
+  final StreamController<void> _syncController =
+      StreamController<void>.broadcast();
+  Stream<void> get onSyncComplete => _syncController.stream;
 
   void startConnectivityListener(String groupId) {
     _connectivityTimer?.cancel();
@@ -53,7 +58,10 @@ class SyncService {
     _connectivityTimer?.cancel();
   }
 
-  Future<bool> _checkInternet() async {
+  Future<bool> isOnline() async {
+    if (kIsWeb) {
+      return true; // 🚀 Web: Assume connected or let browser handle it
+    }
     try {
       final result = await InternetAddress.lookup('google.com');
       return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
@@ -62,6 +70,8 @@ class SyncService {
     }
   }
 
+  Future<bool> _checkInternet() => isOnline();
+
   // 🚀 Sync Everything (Push Pending + Pull Fresh)
   Future<void> syncAll(String groupId) async {
     if (_isSyncing) return;
@@ -69,7 +79,7 @@ class SyncService {
 
     try {
       final List<Map<String, dynamic>> pendingOps = await _cache
-          .getPendingOperations();
+          .getPendingOperations(groupId: groupId);
       if (pendingOps.isEmpty) {
         _isSyncing = false;
         return;
@@ -98,11 +108,26 @@ class SyncService {
         final type = op['type'];
         final data = op['data'] as Map<String, dynamic>;
 
+        // 🚀 CRITICAL: Use groupId from data if available, otherwise fallback to effectiveGroupId
+        final String opGroupId = data['groupId'] ?? effectiveGroupId;
+
+        if (opGroupId.isEmpty || !await PermissionService.canWrite(opGroupId)) {
+          debugPrint(
+            "Sync skipped for operation $i: Subscription expired or no permission for group: $opGroupId",
+          );
+          // Don't abort the whole sync, just skip this group's ops?
+          // Actually, if it's the current group, we can't do much.
+          continue;
+        }
+
         try {
           bool success = false;
           switch (type) {
             case 'individual_visit':
-              success = await _syncIndividualVisit(data, effectiveGroupId);
+              success = await _syncIndividualVisit(data, opGroupId);
+              break;
+            case 'individual_visit_delete':
+              success = await _syncIndividualVisitDelete(data, opGroupId);
               break;
             case 'reminder_visit':
               success = await _syncReminderVisit(data);
@@ -140,18 +165,67 @@ class SyncService {
             case 'delete_grade':
               success = await _syncDeleteGrade(data);
               break;
+            case 'add_study_subject':
+              success = await _syncAddStudySubject(data);
+              break;
+            case 'delete_study_subject':
+              success = await _syncDeleteStudySubject(data);
+              break;
+            case 'add_study_grade':
+              success = await _syncAddStudyGrade(data);
+              break;
+            case 'delete_study_grade':
+              success = await _syncDeleteStudyGrade(data);
+              break;
+            case 'study_class_add':
+              success = await _syncAddGrade(data);
+              break;
+            case 'study_class_delete':
+              success = await _syncDeleteGrade(data);
+              break;
+            case 'study_class_rename':
+              success = await _syncRenameGrade(data);
+              break;
+            case 'study_student_data_clear':
+              success = await _syncStudyStudentDataClear(data);
+              break;
+            case 'add_custom_page':
+              success = await _syncAddCustomPage(data, opGroupId);
+              break;
+            case 'delete_custom_page':
+              success = await _syncDeleteCustomPage(data, opGroupId);
+              break;
+            case 'absence_action_upsert':
+              success = await _syncAbsenceActionUpsert(data);
+              break;
+            case 'congratulation_upsert':
+              success = await _syncCongratulationUpsert(data);
+              break;
+            case 'congratulation_remove':
+              success = await _syncCongratulationRemove(data);
+              break;
+            case 'preparation_add':
+              success = await _syncPreparationAdd(data);
+              break;
+            case 'preparation_delete':
+              success = await _syncPreparationDelete(data);
+              break;
+            case 'meeting_add':
+              success = await _syncMeetingAdd(data);
+              break;
+            case 'meeting_edit':
+              success = await _syncMeetingEdit(data);
+              break;
+            case 'meeting_delete':
+              success = await _syncMeetingDelete(data);
+              break;
             default:
               debugPrint("Unknown operation type: $type");
               success = true; // Mark as done to avoid stuck queue
           }
 
           if (success) {
-            // Remove from cache after success
-            // Note: Re-fetching because index might change if logic gets complex,
-            // but here we can just remove the specific one or clear and retry.
-            // Safer to remove from the top of the queue or by index.
-            await _cache.removePendingOperation(0);
-            // We always remove index 0 because we are processing them in order and removing as we go.
+            await _cache.removePendingOperation(0, groupId: opGroupId);
           }
         } catch (e) {
           debugPrint("Failed to sync operation $i: $e");
@@ -159,6 +233,9 @@ class SyncService {
           break;
         }
       }
+
+      // Notify listeners that sync is done
+      _syncController.add(null);
     } finally {
       _isSyncing = false;
     }
@@ -186,18 +263,19 @@ class SyncService {
       }
     }
 
+    final dbData = Map<String, dynamic>.from(data);
+    final String docId = dbData.remove('visitId') ?? ID.unique();
+    dbData.remove('localImagePaths');
+    dbData.remove('teamId');
+    dbData['imageUrls'] = imageUrls;
+    dbData['publicIds'] = publicIds;
+
     // 2. Create Document
     await _databases.createDocument(
       databaseId: 'main_db',
       collectionId: 'individual_visits',
-      documentId: ID.unique(),
-      data: {
-        ...data,
-        'imageUrls': imageUrls,
-        'publicIds': publicIds,
-        // Remove local paths before saving to DB
-        'localImagePaths': null,
-      }..remove('localImagePaths'),
+      documentId: docId,
+      data: dbData,
       permissions:
           (data['teamId'] != null && data['teamId'].toString().isNotEmpty)
           ? [
@@ -236,7 +314,7 @@ class SyncService {
     // 🚀 Optimistic Update (Targeted)
     await _cache.updateKidInListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed key
-      "طلاب", // Visits are only for students usually
+      'students', // Visits are only for students usually
       data['studentId'],
       {'isVisited': data['isVisited'], 'visitedBy': data['visitedBy']},
     );
@@ -268,6 +346,8 @@ class SyncService {
       ],
     );
 
+    String? finalRealId;
+
     if (existing.total > 0) {
       final docId = existing.documents.first.$id;
       if (data['isPresent'] == false && (data['note'] ?? '').isEmpty) {
@@ -280,7 +360,7 @@ class SyncService {
         await _cache.removeAttendanceStatusItem(groupId, grade, type, name);
         return true;
       } else {
-        await _databases.updateDocument(
+        final syncedDoc = await _databases.updateDocument(
           databaseId: 'main_db',
           collectionId: 'attendance_status',
           documentId: docId,
@@ -290,31 +370,45 @@ class SyncService {
             'timestamp': data['timestamp'],
           },
         );
+        finalRealId = syncedDoc.$id;
       }
     } else if (data['isPresent'] == true || (data['note'] ?? '').isNotEmpty) {
       final dbData = Map<String, dynamic>.from(data);
-      dbData.remove('teamId'); // 🚀 Clean technical fields
+      dbData.remove('teamId');
 
-      await _databases.createDocument(
+      String? effectiveteamId = data['teamId'];
+      if (effectiveteamId == null || effectiveteamId.isEmpty) {
+        try {
+          final groupDoc = await _databases.getDocument(
+            databaseId: 'main_db',
+            collectionId: 'groups',
+            documentId: groupId,
+          );
+          effectiveteamId = groupDoc.data['teamId'];
+        } catch (_) {}
+      }
+
+      final syncedDoc = await _databases.createDocument(
         databaseId: 'main_db',
         collectionId: 'attendance_status',
         documentId: ID.unique(),
         data: dbData,
-        permissions:
-            data['teamId'] != null && data['teamId'].toString().isNotEmpty
+        permissions: (effectiveteamId != null && effectiveteamId.isNotEmpty)
             ? [
-                Permission.read(Role.team(data['teamId'])),
-                Permission.update(Role.team(data['teamId'])),
-                Permission.delete(Role.team(data['teamId'])),
+                Permission.read(Role.team(effectiveteamId)),
+                Permission.update(Role.team(effectiveteamId)),
+                Permission.delete(Role.team(effectiveteamId)),
               ]
             : null,
       );
+      finalRealId = syncedDoc.$id;
     }
 
     // 🚀 Optimistic Cache Update (Better Consistency)
     // Instead of re-fetching the whole list (which might be stale),
     // we manually update our local cache with the exact data we just wrote.
     final updatedDocData = {
+      '\$id': finalRealId, // 🚀 PERSIST REAL ID
       'name': name,
       'isPresent': data['isPresent'],
       'markedBy': data['markedBy'],
@@ -323,7 +417,6 @@ class SyncService {
       'type': type,
       'groupId': groupId,
       'timestamp': data['timestamp'],
-      // We might need ID if we want to be perfect, but for map logic name is key.
     };
 
     await _cache.updateAttendanceStatusItem(
@@ -385,7 +478,7 @@ class SyncService {
 
     await _cache.upsertKidInListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed Key
-      "طلاب",
+      'attendees',
       createdKid,
     );
     return true;
@@ -422,7 +515,7 @@ class SyncService {
     // 🚀 Granular Cache Update
     await _cache.updateKidInListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed key
-      "طلاب",
+      "attendees",
       studentId,
       dbData,
     );
@@ -438,7 +531,7 @@ class SyncService {
     // 🚀 Granular Cache Remove
     await _cache.removeKidFromListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed
-      "طلاب",
+      'attendees',
       data['studentId'],
     );
     return true;
@@ -493,7 +586,7 @@ class SyncService {
     // 🚀 Granular Cache Update
     await _cache.upsertKidInListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed key
-      "خدام",
+      'servants',
       createdKid,
     );
     return true;
@@ -550,7 +643,7 @@ class SyncService {
     // Let's use updateKidInListCache which we already have!
     await _cache.updateKidInListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed Key
-      "خدام",
+      'servants',
       servantId,
       {
         'name': data['name'],
@@ -573,7 +666,7 @@ class SyncService {
     // 🚀 Granular Cache Remove
     await _cache.removeKidFromListCache(
       "${data['groupId']}_${data['grade']}", // 🚀 Fixed Key
-      "خدام",
+      'servants',
       data['servantId'],
     );
     return true;
@@ -671,6 +764,203 @@ class SyncService {
     return true;
   }
 
+  Future<bool> _syncAddStudySubject(Map<String, dynamic> data) async {
+    final Map<String, dynamic> dbData = Map.from(data);
+    final String studentId = dbData['studentId'];
+    final String? teamId = dbData.remove('teamId');
+    final String docId = dbData.remove(r'$id') ?? ID.unique(); // 🚀 Extract ID
+
+    final doc = await _databases.createDocument(
+      databaseId: 'main_db',
+      collectionId: 'subjects',
+      documentId: docId,
+      data: dbData,
+      permissions: (teamId != null && teamId.isNotEmpty)
+          ? [
+              Permission.read(Role.team(teamId)),
+              Permission.update(Role.team(teamId)),
+              Permission.delete(Role.team(teamId)),
+            ]
+          : null,
+    );
+
+    final Map<String, dynamic> cacheData = doc.toMap();
+    await _cache.upsertStudySubjectInCache(studentId, cacheData);
+    return true;
+  }
+
+  Future<bool> _syncDeleteStudySubject(Map<String, dynamic> data) async {
+    final String subjectId = data['subjectId'];
+    final String studentId = data['studentId'];
+
+    // 1. Delete associated grades
+    final subjectDoc = await _databases.getDocument(
+      databaseId: 'main_db',
+      collectionId: 'subjects',
+      documentId: subjectId,
+    );
+    final String subjectName = subjectDoc.data['name'];
+
+    final grades = await _databases.listDocuments(
+      databaseId: 'main_db',
+      collectionId: 'study_grades',
+      queries: [
+        Query.equal('studentId', studentId),
+        Query.equal('subject', subjectName),
+      ],
+    );
+
+    for (var grade in grades.documents) {
+      await _databases.deleteDocument(
+        databaseId: 'main_db',
+        collectionId: 'study_grades',
+        documentId: grade.$id,
+      );
+    }
+
+    // 2. Delete subject
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'subjects',
+      documentId: subjectId,
+    );
+
+    await _cache.removeStudySubjectFromCache(studentId, subjectId);
+    return true;
+  }
+
+  Future<bool> _syncAddStudyGrade(Map<String, dynamic> data) async {
+    final Map<String, dynamic> dbData = Map.from(data);
+    final String studentId = dbData['studentId'];
+    final String subject = dbData['subject'];
+    final String? teamId = dbData.remove('teamId');
+    final String docId = dbData.remove(r'$id') ?? ID.unique(); // 🚀 Extract ID
+
+    final doc = await _databases.createDocument(
+      databaseId: 'main_db',
+      collectionId: 'study_grades',
+      documentId: docId,
+      data: dbData,
+      permissions: (teamId != null && teamId.isNotEmpty)
+          ? [
+              Permission.read(Role.team(teamId)),
+              Permission.update(Role.team(teamId)),
+              Permission.delete(Role.team(teamId)),
+            ]
+          : null,
+    );
+
+    final Map<String, dynamic> cacheData = doc.toMap();
+    await _cache.upsertStudyGradeInCache(studentId, subject, cacheData);
+    return true;
+  }
+
+  Future<bool> _syncDeleteStudyGrade(Map<String, dynamic> data) async {
+    final String gradeId = data['gradeId'];
+    final String studentId = data['studentId'];
+    final String subject = data['subject'];
+
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'study_grades',
+      documentId: gradeId,
+    );
+
+    await _cache.removeStudyGradeFromCache(studentId, subject, gradeId);
+    return true;
+  }
+
+  Future<bool> _syncStudyStudentDataClear(Map<String, dynamic> data) async {
+    final String studentId = data['studentId'];
+
+    // 1. Get Subjects
+    final subjects = await _databases.listDocuments(
+      databaseId: 'main_db',
+      collectionId: 'subjects',
+      queries: [Query.equal('studentId', studentId), Query.limit(1000)],
+    );
+
+    // 2. Delete Subjects and Grades
+    for (final subjectDoc in subjects.documents) {
+      final subjectName = subjectDoc.data['name'];
+
+      // Get Grades
+      final grades = await _databases.listDocuments(
+        databaseId: 'main_db',
+        collectionId: 'study_grades',
+        queries: [
+          Query.equal('studentId', studentId),
+          Query.equal('subject', subjectName),
+          Query.limit(1000),
+        ],
+      );
+
+      // Delete Grades
+      for (final gradeDoc in grades.documents) {
+        await _databases.deleteDocument(
+          databaseId: 'main_db',
+          collectionId: 'study_grades',
+          documentId: gradeDoc.$id,
+        );
+      }
+
+      // Delete Subject
+      await _databases.deleteDocument(
+        databaseId: 'main_db',
+        collectionId: 'subjects',
+        documentId: subjectDoc.$id,
+      );
+    }
+
+    // 3. Clear Cache
+    await _cache.cacheStudySubjects(studentId, []);
+    return true;
+  }
+
+  Future<bool> _syncAddCustomPage(
+    Map<String, dynamic> data,
+    String groupId,
+  ) async {
+    final Map<String, dynamic> dbData = Map.from(data);
+    dbData['groupId'] = groupId;
+    final String? teamId = dbData.remove('teamId');
+
+    final doc = await _databases.createDocument(
+      databaseId: 'main_db',
+      collectionId: 'custom_pages',
+      documentId: ID.unique(),
+      data: dbData,
+      permissions: (teamId != null && teamId.isNotEmpty)
+          ? [
+              Permission.read(Role.team(teamId)),
+              Permission.update(Role.team(teamId)),
+              Permission.delete(Role.team(teamId)),
+            ]
+          : null,
+    );
+
+    final Map<String, dynamic> cacheData = Map.from(doc.data);
+    cacheData[r'$id'] = doc.$id;
+    await _cache.upsertCustomPageInCache(groupId, cacheData);
+    return true;
+  }
+
+  Future<bool> _syncDeleteCustomPage(
+    Map<String, dynamic> data,
+    String groupId,
+  ) async {
+    final String docId = data['docId'];
+
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'custom_pages',
+      documentId: docId,
+    );
+
+    await _cache.removeCustomPageFromCache(groupId, docId);
+    return true;
+  }
+
   Future<void> _refreshKidsCache(
     String? groupId,
     String? grade,
@@ -678,7 +968,9 @@ class SyncService {
   ) async {
     if (groupId == null || groupId.isEmpty || grade == null) return;
     try {
-      final String collectionId = (type == "خدام") ? 'servants' : 'students';
+      final String collectionId = (type == 'servants')
+          ? 'servants'
+          : 'students';
       final result = await _databases.listDocuments(
         databaseId: 'main_db',
         collectionId: collectionId,
@@ -723,13 +1015,419 @@ class SyncService {
     try {
       final grades = await _cache.getCachedGrades(groupId);
       for (final grade in grades) {
-        await _refreshKidsCache(groupId, grade, "طلاب");
-        await _refreshKidsCache(groupId, grade, "خدام");
+        await _refreshKidsCache(groupId, grade, 'students');
+        await _refreshKidsCache(groupId, grade, 'servants');
         // Also refresh status map if needed?
         // AttendancePage handles its own refresh on mount, but global sync is good.
       }
     } catch (e) {
       debugPrint("Global cache refresh partial error: $e");
     }
+  }
+
+  Future<bool> _syncAbsenceActionUpsert(Map<String, dynamic> data) async {
+    final reportId = data['reportId'];
+    final kidName = data['kidName'];
+    final grade = data['grade'];
+    final groupId = data['groupId'];
+    final teamId = data['teamId'];
+    final updates = data['updates'];
+
+    // Check if action exists
+    final result = await _databases.listDocuments(
+      databaseId: 'main_db',
+      collectionId: 'absence_actions',
+      queries: [
+        Query.equal('reportId', reportId),
+        Query.equal('kidName', kidName),
+        Query.limit(1),
+      ],
+    );
+
+    if (result.documents.isNotEmpty) {
+      await _databases.updateDocument(
+        databaseId: 'main_db',
+        collectionId: 'absence_actions',
+        documentId: result.documents.first.$id,
+        data: updates,
+      );
+    } else {
+      await _databases.createDocument(
+        databaseId: 'main_db',
+        collectionId: 'absence_actions',
+        documentId: ID.unique(),
+        data: {
+          'reportId': reportId,
+          'kidName': kidName,
+          'grade': grade,
+          'groupId': groupId,
+          ...updates,
+        },
+        permissions: teamId != null && teamId.toString().isNotEmpty
+            ? [
+                Permission.read(Role.team(teamId)),
+                Permission.update(Role.team(teamId)),
+                Permission.delete(Role.team(teamId)),
+              ]
+            : null,
+      );
+    }
+
+    // Refresh the local cache to match the server state just in case
+    await _cache.updateSingleAbsenceActionInCache(reportId, kidName, updates);
+    return true;
+  }
+
+  Future<bool> _syncCongratulationUpsert(Map<String, dynamic> data) async {
+    final String groupId = data['groupId'];
+    final String kidName = data['kidName'];
+    final List<String> congratulatedBy = List<String>.from(
+      data['congratulatedBy'],
+    );
+    final String? teamId = data['teamId'];
+
+    // Check if exists
+    final result = await _databases.listDocuments(
+      databaseId: 'main_db',
+      collectionId: 'birthday_congratulations',
+      queries: [
+        Query.equal('groupId', groupId),
+        Query.equal('kidName', kidName),
+        Query.limit(1),
+      ],
+    );
+
+    if (result.documents.isNotEmpty) {
+      await _databases.updateDocument(
+        databaseId: 'main_db',
+        collectionId: 'birthday_congratulations',
+        documentId: result.documents.first.$id,
+        data: {
+          'congratulatedBy': congratulatedBy,
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+    } else {
+      await _databases.createDocument(
+        databaseId: 'main_db',
+        collectionId: 'birthday_congratulations',
+        documentId: ID.unique(),
+        data: {
+          'groupId': groupId,
+          'kidName': kidName,
+          'congratulatedBy': congratulatedBy,
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+        permissions: (teamId != null && teamId.isNotEmpty)
+            ? [
+                Permission.read(Role.users()),
+                Permission.update(Role.team(teamId)),
+                Permission.delete(Role.team(teamId)),
+              ]
+            : [
+                Permission.read(Role.users()),
+                Permission.update(Role.users()),
+                Permission.delete(Role.users()),
+              ],
+      );
+    }
+    return true;
+  }
+
+  Future<bool> _syncCongratulationRemove(Map<String, dynamic> data) async {
+    final String groupId = data['groupId'];
+    final String kidName = data['kidName'];
+    final String serverName = data['serverName'];
+
+    final result = await _databases.listDocuments(
+      databaseId: 'main_db',
+      collectionId: 'birthday_congratulations',
+      queries: [
+        Query.equal('groupId', groupId),
+        Query.equal('kidName', kidName),
+        Query.limit(1),
+      ],
+    );
+
+    if (result.documents.isNotEmpty) {
+      final doc = result.documents.first;
+      List<String> currentList = List<String>.from(
+        doc.data['congratulatedBy'] ?? [],
+      );
+      currentList.remove(serverName);
+
+      if (currentList.isEmpty) {
+        await _databases.deleteDocument(
+          databaseId: 'main_db',
+          collectionId: 'birthday_congratulations',
+          documentId: doc.$id,
+        );
+      } else {
+        await _databases.updateDocument(
+          databaseId: 'main_db',
+          collectionId: 'birthday_congratulations',
+          documentId: doc.$id,
+          data: {
+            'congratulatedBy': currentList,
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
+      }
+    }
+    return true;
+  }
+
+  Future<bool> _syncPreparationAdd(Map<String, dynamic> data) async {
+    final groupId = data['groupId'];
+    final teamId = data['teamId'];
+
+    // 1. Upload Images
+    List<String> imageUrls = [];
+    List<String> fileIds = [];
+    final List<dynamic> localPaths = data['localImagePaths'] ?? [];
+
+    for (var path in localPaths) {
+      final file = File(path.toString());
+      if (await file.exists()) {
+        final res = await _imageService.uploadImage(file);
+        if (res != null) {
+          imageUrls.add(res['url']!);
+          fileIds.add(res['id']!);
+        }
+      }
+    }
+
+    // 2. Create Document
+    final dbData = Map<String, dynamic>.from(data);
+    dbData.remove('localImagePaths');
+    dbData.remove('teamId');
+    dbData['imageUrls'] = imageUrls;
+    dbData['fileIds'] = fileIds;
+
+    final doc = await _databases.createDocument(
+      databaseId: 'main_db',
+      collectionId: 'preparations',
+      documentId: ID.unique(),
+      data: dbData,
+      permissions: (teamId != null && teamId.toString().isNotEmpty)
+          ? [
+              Permission.read(Role.team(teamId)),
+              Permission.update(Role.team(teamId)),
+              Permission.delete(Role.team(teamId)),
+            ]
+          : null,
+    );
+
+    // 3. Statuses
+    if (imageUrls.isNotEmpty) {
+      final statusService = StatusService(groupId: groupId);
+      for (String url in imageUrls) {
+        await statusService.addStatus(
+          imageUrl: url,
+          caption: "تحضير جديد: ${data['title']}",
+          source: "التحضير",
+          teamId: teamId,
+          uploaderName: data['servantName'],
+        );
+      }
+    }
+
+    // 4. Update Cache
+    final currentList = await _cache.getCachedPreparations(groupId);
+    currentList.insert(0, doc.toMap());
+    await _cache.cachePreparations(groupId, currentList);
+
+    return true;
+  }
+
+  Future<bool> _syncPreparationDelete(Map<String, dynamic> data) async {
+    final docId = data['docId'];
+    final groupId = data['groupId'];
+    final List<dynamic> fileIds = data['fileIds'] ?? [];
+    final List<dynamic> imageUrls = data['imageUrls'] ?? [];
+
+    // 1. Delete Files
+    final storage = AppwriteService().storage;
+    for (var id in fileIds) {
+      try {
+        await storage.deleteFile(bucketId: 'images', fileId: id.toString());
+      } catch (_) {}
+    }
+
+    // 2. Delete Statuses
+    final statusService = StatusService(groupId: groupId);
+    for (var url in imageUrls) {
+      await statusService.deleteStatusByImageUrl(url.toString());
+    }
+
+    // 3. Delete Document
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'preparations',
+      documentId: docId,
+    );
+
+    // 4. Update Cache
+    await _cache.removePreparationFromCache(groupId, docId);
+
+    return true;
+  }
+
+  Future<bool> _syncMeetingAdd(Map<String, dynamic> data) async {
+    final groupId = data['groupId'];
+    final teamId = data['teamId'];
+
+    // 1. Upload Images
+    List<String> imageUrls = [];
+    List<String> fileIds = [];
+    final List<dynamic> localPaths = data['localImagePaths'] ?? [];
+
+    for (var path in localPaths) {
+      final file = File(path.toString());
+      if (await file.exists()) {
+        final res = await _imageService.uploadImage(file);
+        if (res != null) {
+          imageUrls.add(res['url']!);
+          fileIds.add(res['id']!);
+        }
+      }
+    }
+
+    // 2. Create Document
+    final dbData = Map<String, dynamic>.from(data);
+    dbData.remove('localImagePaths');
+    dbData.remove('teamId');
+    dbData['imageUrls'] = imageUrls;
+    dbData['fileIds'] = fileIds;
+
+    final doc = await _databases.createDocument(
+      databaseId: 'main_db',
+      collectionId: 'meetings',
+      documentId: ID.unique(),
+      data: dbData,
+      permissions: (teamId != null && teamId.toString().isNotEmpty)
+          ? [
+              Permission.read(Role.team(teamId)),
+              Permission.update(Role.team(teamId)),
+              Permission.delete(Role.team(teamId)),
+            ]
+          : null,
+    );
+
+    // 3. Statuses
+    if (imageUrls.isNotEmpty) {
+      final statusService = StatusService(groupId: groupId);
+      for (String url in imageUrls) {
+        await statusService.addStatus(
+          imageUrl: url,
+          caption: "اجتماع جديد: ${data['title']}",
+          source: "الاجتماعات",
+          teamId: teamId,
+          uploaderName: data['servantName'],
+        );
+      }
+    }
+
+    // 4. Update Cache
+    final currentList = await _cache.getCachedMeetings(groupId);
+    currentList.insert(0, doc.toMap());
+    await _cache.cacheMeetings(groupId, currentList);
+
+    return true;
+  }
+
+  Future<bool> _syncMeetingEdit(Map<String, dynamic> data) async {
+    final docId = data['docId'];
+    final groupId = data['groupId'];
+    final updates = data['updates'];
+
+    await _databases.updateDocument(
+      databaseId: 'main_db',
+      collectionId: 'meetings',
+      documentId: docId,
+      data: updates,
+    );
+
+    await _cache.updateMeetingInCache(groupId, docId, updates);
+    return true;
+  }
+
+  Future<bool> _syncMeetingDelete(Map<String, dynamic> data) async {
+    final docId = data['docId'];
+    final groupId = data['groupId'];
+    final List<dynamic> fileIds = data['fileIds'] ?? [];
+    final List<dynamic> imageUrls = data['imageUrls'] ?? [];
+
+    // 1. Delete Files
+    final storage = AppwriteService().storage;
+    for (var id in fileIds) {
+      try {
+        await storage.deleteFile(bucketId: 'images', fileId: id.toString());
+      } catch (_) {}
+    }
+
+    // 2. Delete Statuses
+    final statusService = StatusService(groupId: groupId);
+    for (var url in imageUrls) {
+      await statusService.deleteStatusByImageUrl(url.toString());
+    }
+
+    // 3. Delete Document
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'meetings',
+      documentId: docId,
+    );
+
+    // 4. Update Cache
+    await _cache.removeMeetingFromCache(groupId, docId);
+
+    return true;
+  }
+
+  Future<bool> _syncIndividualVisitDelete(
+    Map<String, dynamic> data,
+    String groupId,
+  ) async {
+    final String visitId = data['visitId'];
+    final List<dynamic> imageUrls = data['imageUrls'] ?? [];
+    final List<dynamic> publicIds = data['publicIds'] ?? [];
+
+    // 1. Delete from Storage
+    for (var id in publicIds) {
+      if (id != null) {
+        try {
+          await _imageService.deleteImage(id.toString());
+        } catch (_) {}
+      }
+    }
+
+    // 2. Delete Statuses
+    final statusService = StatusService(groupId: groupId);
+    for (var url in imageUrls) {
+      if (url != null) {
+        try {
+          await statusService.deleteStatusByImageUrl(url.toString());
+        } catch (_) {}
+      }
+    }
+
+    // 3. Delete Document
+    await _databases.deleteDocument(
+      databaseId: 'main_db',
+      collectionId: 'individual_visits',
+      documentId: visitId,
+    );
+
+    // 4. Update Cache
+    await _cache.removeIndividualVisitFromCache(
+      groupId,
+      data['kidGrade'],
+      visitId,
+    );
+    // Also remove from kid specific cache
+    await _cache.removeKidVisitFromCache(groupId, data['kidName'], visitId);
+
+    return true;
   }
 }

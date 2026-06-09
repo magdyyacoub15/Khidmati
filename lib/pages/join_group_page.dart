@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/appwrite_service.dart';
 import '../services/data_cache_service.dart';
+import '../l10n/app_translations.dart';
 
 class JoinGroupPage extends StatefulWidget {
   const JoinGroupPage({super.key});
@@ -41,14 +42,19 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
         confirm.isEmpty ||
         username.isEmpty ||
         groupCode.isEmpty) {
-      _showError("يرجى إكمال جميع الحقول");
+      _showError('fill_all_fields'.tr(context));
       return;
     }
 
     if (password != confirm) {
-      _showError("كلمات المرور غير متطابقة");
+      _showError('passwords_not_match'.tr(context));
       return;
     }
+
+    // Pre-evaluate context-dependent translations before async gaps
+    final String groupCodeIncorrectMsg = 'group_code_incorrect'.tr(context);
+    final String connectionErrorMsg = 'connection_error'.tr(context);
+    final String unexpectedErrorTemplate = 'unexpected_error'.tr(context);
 
     setState(() => _isLoading = true);
 
@@ -94,7 +100,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
       );
 
       if (groupResult.total == 0) {
-        _showError("كود المجموعة غير صحيح");
+        if (mounted) _showError(groupCodeIncorrectMsg);
         return;
       }
 
@@ -165,9 +171,9 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
 
       _showTelegramJoinDialog();
     } on AppwriteException catch (e) {
-      _showError(e.message ?? "حدث خطأ أثناء الاتصال");
+      _showError(e.message ?? connectionErrorMsg);
     } catch (e) {
-      _showError("حدث خطأ غير متوقع: $e");
+      _showError(unexpectedErrorTemplate.replaceFirst('%s', e.toString()));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -179,20 +185,20 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          "تم إرسال الطلب بنجاح! 🎉",
+        title: Text(
+          'request_sent_success'.tr(context),
           textAlign: TextAlign.center,
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.send, size: 50, color: Colors.blue),
-            SizedBox(height: 15),
+            const Icon(Icons.send, size: 50, color: Colors.blue),
+            const SizedBox(height: 15),
             Text(
-              "لقد تم تسجيل بياناتك وبانتظار موافقة الأدمن. يرجى الاشتراك في قناة التليجرام لمتابعة آخر التحديثات وحل المشاكل التقنية.",
+              'request_sent_desc'.tr(context),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16),
+              style: const TextStyle(fontSize: 16),
             ),
           ],
         ),
@@ -206,7 +212,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                 (route) => false,
               );
             },
-            child: const Text("لاحقاً"),
+            child: Text('later'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -237,7 +243,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text("الاشتراك الآن"),
+            child: Text('subscribe_now'.tr(context)),
           ),
         ],
       ),
@@ -261,9 +267,9 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text(
-          "الالتحاق بمجموعة",
-          style: TextStyle(
+        title: Text(
+          'join_group'.tr(context),
+          style: const TextStyle(
             color: Color(0xFF1A237E),
             fontWeight: FontWeight.bold,
           ),
@@ -292,25 +298,31 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
             ),
           ),
 
-          SingleChildScrollView(
+          RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(30),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                  "بيانات الالتحاق",
+                Text(
+                  'join_data'.tr(context),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1A237E),
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  "أدخل الكود الخاص بمجموعتك لتنضم إليها",
+                Text(
+                  'enter_group_code'.tr(context),
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: Colors.grey),
+                  style: const TextStyle(fontSize: 14, color: Colors.grey),
                 ),
                 const SizedBox(height: 30),
 
@@ -332,20 +344,20 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                     children: [
                       _buildField(
                         controller: usernameController,
-                        hint: "اسم المستخدم",
+                        hint: 'username'.tr(context),
                         icon: Icons.person_outline,
                       ),
                       const SizedBox(height: 15),
                       _buildField(
                         controller: emailController,
-                        hint: "البريد الإلكتروني",
+                        hint: 'email'.tr(context),
                         icon: Icons.email_outlined,
                         keyboardType: TextInputType.emailAddress,
                       ),
                       const SizedBox(height: 15),
                       _buildField(
                         controller: passwordController,
-                        hint: "كلمة المرور",
+                        hint: 'password'.tr(context),
                         icon: Icons.lock_outline,
                         isPassword: true,
                         isPasswordVisible: _isPasswordVisible,
@@ -356,7 +368,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                       const SizedBox(height: 15),
                       _buildField(
                         controller: confirmPasswordController,
-                        hint: "تأكيد كلمة المرور",
+                        hint: 'confirm_password'.tr(context),
                         icon: Icons.lock_reset_outlined,
                         isPassword: true,
                         isPasswordVisible: _isPasswordVisible,
@@ -364,7 +376,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                       const SizedBox(height: 15),
                       _buildField(
                         controller: groupCodeController,
-                        hint: "كود الالتحاق",
+                        hint: 'join_code'.tr(context),
                         icon: Icons.vpn_key_outlined,
                       ),
                       const SizedBox(height: 30),
@@ -384,9 +396,9 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                                     borderRadius: BorderRadius.circular(15),
                                   ),
                                 ),
-                                child: const Text(
-                                  "التحاق الآن",
-                                  style: TextStyle(
+                                child: Text(
+                                  'join_now'.tr(context),
+                                  style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -398,6 +410,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                 ),
               ],
             ),
+          ),
           ),
         ],
       ),

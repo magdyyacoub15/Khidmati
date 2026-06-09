@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'dart:math';
 import '../services/appwrite_service.dart';
 import '../services/team_service.dart';
+import '../services/referral_service.dart';
+import '../l10n/app_translations.dart';
 
 class CreateGroupPage extends StatefulWidget {
   const CreateGroupPage({super.key});
@@ -23,6 +25,7 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
   final TextEditingController countryController = TextEditingController();
   final TextEditingController serviceNameController = TextEditingController();
   final TextEditingController churchNameController = TextEditingController();
+  final TextEditingController referralCodeController = TextEditingController();
 
   bool _isLoading = false;
   bool _isPasswordVisible = false;
@@ -74,12 +77,12 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
         confirm.isEmpty ||
         username.isEmpty ||
         service.isEmpty) {
-      _showError("يرجى ملء الحقول الأساسية (البريد، الباسورد، الاسم، الخدمة)");
+      _showError('fill_required_fields'.tr(context));
       return;
     }
 
     if (password != confirm) {
-      _showError("كلمات المرور غير متطابقة");
+      _showError('passwords_not_match'.tr(context));
       return;
     }
 
@@ -177,6 +180,18 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
 
       if (!mounted) return;
 
+      // Submit Referral if a code was provided (Silently, without blocking)
+      final referralCode = referralCodeController.text.trim();
+      if (referralCode.isNotEmpty) {
+        ReferralService.submitReferral(referralCode, groupId).then((success) {
+          if (success) {
+            debugPrint("Referral submitted successfully.");
+          } else {
+            debugPrint("Referral submission failed or invalid.");
+          }
+        });
+      }
+
       await _showTelegramJoinDialog();
 
       if (!mounted) return;
@@ -186,9 +201,11 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
         (route) => false,
       );
     } on AppwriteException catch (e) {
-      _showError(e.message ?? "حدث خطأ أثناء إنشاء المجموعة في Appwrite");
+      _showError(e.message ?? 'error_creating_group'.tr(context));
     } catch (e) {
-      _showError("حدث خطأ غير متوقع: $e");
+      _showError(
+        'unexpected_error'.tr(context).replaceFirst('%s', e.toString()),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -200,27 +217,27 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          "قناة التحديثات",
+        title: Text(
+          'updates_channel'.tr(context),
           textAlign: TextAlign.center,
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.send, size: 50, color: Colors.blue),
-            SizedBox(height: 15),
+            const Icon(Icons.send, size: 50, color: Colors.blue),
+            const SizedBox(height: 15),
             Text(
-              "يرجى الاشتراك في قناة التليجرام لمتابعة آخر التحديثات وحل المشاكل التقنية فور حدوثها.",
+              'telegram_subscribe_msg'.tr(context),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16),
+              style: const TextStyle(fontSize: 16),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("لاحقاً"),
+            child: Text('later'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -245,7 +262,7 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text("الاشتراك الآن"),
+            child: Text('subscribe_now'.tr(context)),
           ),
         ],
       ),
@@ -269,9 +286,9 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text(
-          "إنشاء مجموعة جديدة",
-          style: TextStyle(
+        title: Text(
+          'create_new_group'.tr(context),
+          style: const TextStyle(
             color: Color(0xFF1A237E),
             fontWeight: FontWeight.bold,
           ),
@@ -298,7 +315,13 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
               ),
             ),
           ),
-          SingleChildScrollView(
+          RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(30),
             child: Column(
               children: [
@@ -317,23 +340,23 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
                   ),
                   child: Column(
                     children: [
-                      _buildSectionTitle("بيانات الحساب (الأدمن)"),
+                      _buildSectionTitle('admin_account_data'.tr(context)),
                       _buildField(
                         controller: usernameController,
-                        hint: "الاسم الشخصي",
+                        hint: 'personal_name'.tr(context),
                         icon: Icons.person_outline,
                       ),
                       const SizedBox(height: 12),
                       _buildField(
                         controller: emailController,
-                        hint: "البريد الإلكتروني",
+                        hint: 'email'.tr(context),
                         icon: Icons.email_outlined,
                         keyboardType: TextInputType.emailAddress,
                       ),
                       const SizedBox(height: 12),
                       _buildField(
                         controller: passwordController,
-                        hint: "كلمة المرور",
+                        hint: 'password'.tr(context),
                         icon: Icons.lock_outline,
                         isPassword: true,
                         isPasswordVisible: _isPasswordVisible,
@@ -344,37 +367,44 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
                       const SizedBox(height: 12),
                       _buildField(
                         controller: confirmPasswordController,
-                        hint: "تأكيد كلمة المرور",
+                        hint: 'confirm_password'.tr(context),
                         icon: Icons.lock_reset_outlined,
                         isPassword: true,
                         isPasswordVisible: _isPasswordVisible,
                       ),
 
                       const Divider(height: 40),
-                      _buildSectionTitle("بيانات الكنيسة"),
+                      _buildSectionTitle('church_data'.tr(context)),
                       _buildField(
                         controller: serviceNameController,
-                        hint: "اسم الكنيسة",
+                        hint: 'service_name'.tr(context),
                         icon: Icons.church,
                       ),
                       const SizedBox(height: 12),
                       _buildField(
                         controller: churchNameController,
-                        hint: "مرحلة الخدمة",
+                        hint: 'church_stage'.tr(context),
                         icon: Icons.map_outlined,
                       ),
                       const SizedBox(height: 12),
                       _buildField(
                         controller: phoneController,
-                        hint: "رقم الهاتف",
+                        hint: 'phone_number'.tr(context),
                         icon: Icons.phone_outlined,
                         keyboardType: TextInputType.phone,
                       ),
                       const SizedBox(height: 12),
                       _buildField(
                         controller: countryController,
-                        hint: "البلد",
+                        hint: 'country'.tr(context),
                         icon: Icons.public_outlined,
+                      ),
+                      const Divider(height: 40),
+                      _buildSectionTitle('optional_referral_code'.tr(context)),
+                      _buildField(
+                        controller: referralCodeController,
+                        hint: 'subscription_referral_code'.tr(context),
+                        icon: Icons.card_giftcard,
                       ),
 
                       const SizedBox(height: 30),
@@ -393,9 +423,9 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
                                     borderRadius: BorderRadius.circular(15),
                                   ),
                                 ),
-                                child: const Text(
-                                  "حفظ وإنشاء",
-                                  style: TextStyle(
+                                child: Text(
+                                  'save_and_create'.tr(context),
+                                  style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -407,6 +437,7 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
                 ),
               ],
             ),
+          ),
           ),
         ],
       ),

@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'notification_service.dart';
 import 'package:flutter/foundation.dart';
 import 'appwrite_service.dart';
+import '../l10n/app_translations.dart';
+import 'language_service.dart';
 
 class AIInsight {
   final String id;
@@ -114,7 +116,7 @@ class AIInsightService {
           ? 'consecutive_absence'
           : 'least_visited';
 
-      final message = _generateEncouragingMessage(selectedKid, type);
+      final message = _generateEncouragingMessage(type);
 
       debugPrint("📌 Selected kid for today: $selectedKid (Type: $type)");
 
@@ -249,22 +251,22 @@ class AIInsightService {
     }
   }
 
-  String _generateEncouragingMessage(String kidName, String type) {
+  String _generateEncouragingMessage(String type) {
     List<String> encouragements;
 
     if (type == 'consecutive_absence') {
       encouragements = [
-        "المخدوم $kidName غاب أكتر من مرة، محتاج سؤال ضروري منك 📞",
-        "تذكير: $kidName مش ظاهر بقاله فترة، ممكن تطمن عليه النهاردة؟ ✨",
-        "الغياب المتكرر لـ $kidName محتاج وقفة حب واحتواء، ماتنساش تكلمه 🙏",
+        "consecutive_absence_msg_1",
+        "consecutive_absence_msg_2",
+        "consecutive_absence_msg_3",
       ];
     } else {
       // least_visited
       encouragements = [
-        "المخدوم $kidName محتاج سؤالك عليه النهارده 💙",
-        "تذكير: $kidName من أكتر المخدومين اللي محتاجين اهتمامك وزيارتك الفترة دي ✨",
-        "ماتنساش تطمن على $kidName النهاردة، تعب محبتك كبير 🙏",
-        "افتقاد $kidName النهاردة هيكون له أثر كبير في حياته 🌿",
+        "least_visited_msg_1",
+        "least_visited_msg_2",
+        "least_visited_msg_3",
+        "least_visited_msg_4",
       ];
     }
 
@@ -369,17 +371,36 @@ class AIInsightService {
         );
       }
 
+      final languageCode = LanguageService().currentLocale.value;
+      final titleMorning = AppTranslations.translateWithoutContext(
+        languageCode,
+        "morning_reminder_title",
+      );
+      final titleEvening = AppTranslations.translateWithoutContext(
+        languageCode,
+        "evening_reminder_title",
+      );
+
+      final resolvedBody = AppTranslations.translateWithoutContext(
+        languageCode,
+        message,
+      ).replaceAll('%s', kidName);
+      final eveningBodyPart = AppTranslations.translateWithoutContext(
+        languageCode,
+        "evening_reminder_body",
+      ).replaceAll('%s', kidName);
+
       await NotificationService().scheduleNotification(
         id: baseId + 10,
-        title: "تذكير صباحي ☀️",
-        body: message,
+        title: titleMorning,
+        body: resolvedBody,
         scheduledDate: morningTime,
       );
 
       await NotificationService().scheduleNotification(
         id: baseId + 20,
-        title: "تذكير مسائي ✨",
-        body: "ماتنساش تطمن على المخدوم $kidName النهاردة 💙",
+        title: titleEvening,
+        body: eveningBodyPart,
         scheduledDate: eveningTime,
       );
 
@@ -415,11 +436,20 @@ class AIInsightService {
 
   List<AIInsight> _loadInsightFromPrefs(SharedPreferences prefs) {
     final kidName = prefs.getString('ai_insight_kid_name');
-    final message = prefs.getString('ai_insight_message');
+    String? message = prefs.getString('ai_insight_message');
     final type = prefs.getString('ai_insight_type');
 
     if (kidName == null || message == null || type == null) {
       return [];
+    }
+
+    // Migration logic: If the cached message contains spaces (like old Arabic phrases),
+    // replace it with the new translation key so it works with all languages.
+    if (message.contains(' ')) {
+      message = type == 'consecutive_absence'
+          ? 'consecutive_absence_msg_1'
+          : 'least_visited_msg_1';
+      prefs.setString('ai_insight_message', message);
     }
 
     return [

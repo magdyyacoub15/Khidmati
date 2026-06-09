@@ -1,0 +1,42 @@
+{
+    "en": {
+        "remaining_count": "Remaining: %s",
+        "no_visits_added_yet": "No visits recorded for %s yet."
+    },
+    "ar": {
+        "remaining_count": "المتبقي: %s",
+        "no_visits_added_yet": "لا توجد زيارات مسجلة لـ %s بعد."
+    },
+    "fr": {
+        "remaining_count": "Restant : %s",
+        "no_visits_added_yet": "Aucune visite enregistrée pour %s pour le moment."
+    },
+    "es": {
+        "remaining_count": "Restante: %s",
+        "no_visits_added_yet": "Aún no hay visitas registradas para %s."
+    },
+    "de": {
+        "remaining_count": "Verbleibend: %s",
+        "no_visits_added_yet": "Noch keine Besuche für %s aufgezeichnet."
+    },
+    "it": {
+        "remaining_count": "Rimanente: %s",
+        "no_visits_added_yet": "Ancora nessuna visita registrata per %s."
+    },
+    "pt": {
+        "remaining_count": "Restante: %s",
+        "no_visits_added_yet": "Ainda não há visitas registradas para %s."
+    },
+    "nl": {
+        "remaining_count": "Resterend: %s",
+        "no_visits_added_yet": "Nog geen bezoeken geregistreerd voor %s."
+    },
+    "ru": {
+        "remaining_count": "Осталось: %s",
+        "no_visits_added_yet": "Для %s пока нет записей о посещениях."
+    },
+    "pl": {
+        "remaining_count": "Pozostało: %s",
+        "no_visits_added_yet": "Nie zarejestrowano jeszcze żadnych wizyt dla %s."
+    }
+}

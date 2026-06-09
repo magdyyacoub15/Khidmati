@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
+import 'package:universal_io/io.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../services/image_cache_service.dart';
@@ -43,7 +44,7 @@ class FullScreenImage extends StatelessWidget {
   }
 
   Widget _buildImage() {
-    if (localPath != null && localPath!.isNotEmpty) {
+    if (!kIsWeb && localPath != null && localPath!.isNotEmpty) {
       return Image.file(
         File(localPath!),
         fit: BoxFit.contain,

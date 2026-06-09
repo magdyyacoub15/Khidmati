@@ -13,6 +13,8 @@ import '../services/permission_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../widgets/full_screen_image.dart';
 import '../services/data_cache_service.dart';
+import '../services/sync_service.dart';
+import '../l10n/app_translations.dart';
 import '../models/kid.dart';
 
 // -----------------------------------------------------------------------------
@@ -109,7 +111,7 @@ class _StudyTrackingPageState extends State<StudyTrackingPage> {
 
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   @override
   void initState() {
@@ -118,24 +120,58 @@ class _StudyTrackingPageState extends State<StudyTrackingPage> {
   }
 
   Future<void> _loadUserData() async {
+    // 🚀 1. Try to load from cache IMMEDIATELY (Non-blocking)
+    final cachedUserId = await UserService().getCachedUserId();
+    if (cachedUserId != null) {
+      final cachedCtx = await DataCacheService().getCachedUserGroupId(
+        cachedUserId,
+      );
+      if (cachedCtx != null) {
+        if (mounted) {
+          _updateState(cachedCtx);
+        }
+      } else {
+        final fallbackData = await DataCacheService().getCachedUserData();
+        if (fallbackData != null) {
+          _updateState(fallbackData);
+        }
+      }
+    } else {
+      final fallbackData = await DataCacheService().getCachedUserData();
+      if (fallbackData != null) {
+        _updateState(fallbackData);
+      }
+    }
+
+    // 🚀 2. Background Network Refresh (Silent)
     try {
       final user = await _account.get();
+      final userId = user.$id;
 
-      // Initial Fetch
       try {
         final doc = await _databases.getDocument(
           databaseId: databaseId,
           collectionId: usersCollectionId,
-          documentId: user.$id,
+          documentId: userId,
         );
-        _updateState(doc.data);
+
+        await DataCacheService().cacheUserGroupId(
+          userId,
+          doc.data['groupId'] ?? '',
+          doc.data['teamId'],
+          doc.data['role'] ?? '',
+        );
+        await DataCacheService().cacheUserData(doc.data);
+
+        if (mounted) _updateState(doc.data);
       } catch (e) {
         debugPrint("Error fetching user data: $e");
       }
 
       // Realtime Listener
+      _userSubscription?.close();
       _userSubscription = _realtime.subscribe([
-        'databases.$databaseId.collections.$usersCollectionId.documents.${user.$id}',
+        'databases.$databaseId.collections.$usersCollectionId.documents.$userId',
       ]);
 
       _userSubscription!.stream.listen((event) {
@@ -144,8 +180,8 @@ class _StudyTrackingPageState extends State<StudyTrackingPage> {
         }
       });
     } catch (e) {
-      debugPrint("Error in _loadUserData: $e");
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint("Offline mode active or error in _loadUserData: $e");
+      if (mounted && _myGroupId.isEmpty) setState(() => _isLoading = false);
     }
   }
 
@@ -168,14 +204,14 @@ class _StudyTrackingPageState extends State<StudyTrackingPage> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text("تحميل...")),
+        appBar: AppBar(title: Text('loading'.tr(context))),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        title: const Text("الفصول الدراسية"),
+        title: Text('study_classes'.tr(context)),
         backgroundColor: Colors.blue.shade900,
         foregroundColor: Colors.white,
       ),
@@ -231,7 +267,13 @@ class _GradesList extends StatelessWidget {
       stream: gradeService.getGradesStream(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
+          return Center(
+            child: Text(
+              'error_loading_data'
+                  .tr(context)
+                  .replaceFirst('%s', snapshot.error.toString()),
+            ),
+          );
         }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -240,10 +282,10 @@ class _GradesList extends StatelessWidget {
         final grades = snapshot.data!;
 
         if (grades.isEmpty) {
-          return const Center(
+          return Center(
             child: Text(
-              "لا توجد فصول مضافة حالياً",
-              style: TextStyle(fontSize: 18, color: Colors.white),
+              'no_classes_added'.tr(context),
+              style: const TextStyle(fontSize: 18, color: Colors.white),
             ),
           );
         }
@@ -322,7 +364,7 @@ class _GradeCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    "اضغط لمتابعة طلاب الفصل",
+                    'tap_to_follow_students'.tr(context),
                     style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
                     textAlign: TextAlign.center,
                   ),
@@ -353,7 +395,7 @@ class StudentsPage extends StatefulWidget {
 
 class _StudentsPageState extends State<StudentsPage> {
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   List<Kid> _students = [];
   bool _isLoading = true;
@@ -437,6 +479,27 @@ class _StudentsPageState extends State<StudentsPage> {
 
   Future<void> _clearStudentData(String studentId, String studentName) async {
     try {
+      final syncData = {'studentId': studentId};
+
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'study_student_data_clear',
+          'data': syncData,
+        });
+
+        // Optimistic UI Update in Cache
+        await DataCacheService().cacheStudySubjects(studentId, []);
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('offline_saved'.tr(context))));
+        }
+        return;
+      }
+
       // 1. Get Subjects
       final subjects = await _databases.listDocuments(
         databaseId: databaseId,
@@ -476,17 +539,30 @@ class _StudentsPageState extends State<StudentsPage> {
         );
       }
 
+      // 3. Clear Cache
+      await DataCacheService().cacheStudySubjects(studentId, []);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("✅ تم حذف جميع مواد ودرجات الطالب $studentName"),
+            content: Text(
+              'student_data_deleted_success'
+                  .tr(context)
+                  .replaceFirst('%s', studentName),
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("❌ خطأ في حذف بيانات الطالب: $e")),
+          SnackBar(
+            content: Text(
+              'student_data_deleted_error'
+                  .tr(context)
+                  .replaceFirst('%s', e.toString()),
+            ),
+          ),
         );
       }
     }
@@ -496,7 +572,7 @@ class _StudentsPageState extends State<StudentsPage> {
     if (!_canWrite) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("⚠️ انتهت صلاحية الاشتراك")),
+          SnackBar(content: Text('subscription_expired_warning'.tr(context))),
         );
       }
       return;
@@ -505,14 +581,14 @@ class _StudentsPageState extends State<StudentsPage> {
     showDialog<void>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text("مسح بيانات الطالب"),
+        title: Text('clear_student_data_title'.tr(context)),
         content: Text(
-          "هل أنت متأكد من مسح جميع بيانات الطالب '$studentName' (المواد والدرجات)؟\n\nملاحظة: الطالب نفسه لن يتم حذفه.",
+          'clear_student_data_desc'.tr(context).replaceFirst('%s', studentName),
         ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -520,7 +596,7 @@ class _StudentsPageState extends State<StudentsPage> {
               _clearStudentData(studentId, studentName);
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            child: const Text("مسح البيانات"),
+            child: Text('clear_data'.tr(context)),
           ),
         ],
       ),
@@ -547,10 +623,10 @@ class _StudentsPageState extends State<StudentsPage> {
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _students.isEmpty
-            ? const Center(
+            ? Center(
                 child: Text(
-                  "لا يوجد طلاب في هذا الفصل",
-                  style: TextStyle(fontSize: 18, color: Colors.white),
+                  'no_students_in_class'.tr(context),
+                  style: const TextStyle(fontSize: 18, color: Colors.white),
                 ),
               )
             : Column(
@@ -562,40 +638,47 @@ class _StudentsPageState extends State<StudentsPage> {
                       children: [
                         _buildStatItem(
                           Icons.people,
-                          'إجمالي الطلاب',
+                          'total_students_count'.tr(context),
                           _students.length.toString(),
                         ),
-                        _buildStatItem(Icons.grade, 'الصف', widget.gradeTitle),
+                        _buildStatItem(
+                          Icons.grade,
+                          'grade_word'.tr(context),
+                          widget.gradeTitle,
+                        ),
                       ],
                     ),
                   ),
                   Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _students.length,
-                      itemBuilder: (context, index) {
-                        final kid = _students[index];
-                        return _StudentCard(
-                          studentId: kid.id,
-                          studentName: kid.name,
-                          studentPhone: kid.phoneRequired ?? '',
-                          studentData: kid.toMap(),
-                          groupId: widget.groupId,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => StudentDetailsPage(
-                                studentId: kid.id,
-                                studentName: kid.name,
-                                studentPhotoUrl: kid.photoUrl,
-                                groupId: widget.groupId,
+                    child: RefreshIndicator(
+                      onRefresh: _fetchStudents,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _students.length,
+                        itemBuilder: (context, index) {
+                          final kid = _students[index];
+                          return _StudentCard(
+                            studentId: kid.id,
+                            studentName: kid.name,
+                            studentPhone: kid.phoneRequired ?? '',
+                            studentData: kid.toMap(),
+                            groupId: widget.groupId,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => StudentDetailsPage(
+                                  studentId: kid.id,
+                                  studentName: kid.name,
+                                  studentPhotoUrl: kid.photoUrl,
+                                  groupId: widget.groupId,
+                                ),
                               ),
                             ),
-                          ),
-                          onClearData: () =>
-                              _showClearStudentDataDialog(kid.id, kid.name),
-                        );
-                      },
+                            onClearData: () =>
+                                _showClearStudentDataDialog(kid.id, kid.name),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ],
@@ -811,7 +894,7 @@ class _StudentCardState extends State<_StudentCard> {
                   ],
                 ),
               )
-            : const Text("لا يوجد هاتف", textAlign: TextAlign.center),
+            : Text('no_phone_found'.tr(context), textAlign: TextAlign.center),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -848,22 +931,38 @@ class StudentDetailsPage extends StatefulWidget {
 
 class _StudentDetailsPageState extends State<StudentDetailsPage> {
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   List<models.Document> _subjects = [];
   bool _isLoading = true;
   bool _canWrite = true;
   String? _teamId;
   RealtimeSubscription? _subscription;
+  String? _currentUserId;
+  String? _currentUserName;
 
   @override
   void initState() {
     super.initState();
+    _loadUserInfo();
     _loadCachedSubjects();
     _fetchSubjects();
     _subscribe();
     _fetchTeamId();
     _checkPermissions();
+  }
+
+  Future<void> _loadUserInfo() async {
+    try {
+      final user = await UserService().getCurrentUser();
+      final name = await UserService().getCurrentUserName();
+      if (mounted) {
+        setState(() {
+          _currentUserId = user?.$id;
+          _currentUserName = name;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkPermissions() async {
@@ -919,14 +1018,8 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
           _subjects = result.documents;
           _isLoading = false;
         });
-        // 🚀 Cache subjects
-        // Wait, Appwrite Document is more than just data. But for caching simple stuff doc.data is usually enough if we include $id.
-        final cacheMaps = result.documents.map((doc) {
-          final m = Map<String, dynamic>.from(doc.data);
-          m['\$id'] = doc.$id;
-          m['\$createdAt'] = doc.$createdAt;
-          return m;
-        }).toList();
+        // 🚀 Cache subjects securely using toMap()
+        final cacheMaps = result.documents.map((doc) => doc.toMap()).toList();
         DataCacheService().cacheStudySubjects(widget.studentId, cacheMaps);
       }
     } catch (e) {
@@ -947,24 +1040,56 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
   }
 
   Future<void> _addSubject(String name) async {
-    try {
-      final user = await AppwriteService().account.get();
-      final userName = await UserService().getCurrentUserName();
+    final String docId = ID.unique(); // 🚀 Use consistent ID
+    final Map<String, dynamic> subjectData = {
+      'name': name,
+      'studentId': widget.studentId,
+      'studentName': widget.studentName,
+      'type': 'school',
+      'createdAt': DateTime.now().toIso8601String(),
+      'createdBy': _currentUserId ?? 'pending',
+      'createdByName': _currentUserName ?? 'pending',
+      'groupId': widget.groupId,
+    };
 
-      await _databases.createDocument(
+    // 🚀 Optimistic UI: Add to local state immediately
+    final Map<String, dynamic> tempDocData = Map.from(subjectData);
+    tempDocData[r'$id'] = docId;
+
+    final tempDoc = models.Document.fromMap(tempDocData);
+
+    if (mounted) {
+      setState(() {
+        _subjects.insert(0, tempDoc);
+      });
+      // 🚀 Cache update
+      DataCacheService().upsertStudySubjectInCache(
+        widget.studentId,
+        tempDocData,
+      );
+    }
+
+    try {
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'add_study_subject',
+          'data': {...subjectData, r'$id': docId, 'teamId': _teamId},
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('offline_saved'.tr(context))));
+        }
+        return;
+      }
+
+      final doc = await _databases.createDocument(
         databaseId: databaseId,
         collectionId: subjectsCollectionId,
-        documentId: ID.unique(),
-        data: {
-          'name': name,
-          'studentId': widget.studentId,
-          'studentName': widget.studentName,
-          'type': 'school',
-          'createdAt': DateTime.now().toIso8601String(),
-          'createdBy': user.$id,
-          'createdByName': userName,
-          'groupId': widget.groupId,
-        },
+        documentId: docId, // 🚀 Use consistent docId
+        data: subjectData,
         permissions: _teamId != null
             ? [
                 Permission.read(Role.team(_teamId!)),
@@ -974,16 +1099,36 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
             : null,
       );
       if (mounted) {
+        // Replace temp doc with actual doc
+        setState(() {
+          final idx = _subjects.indexWhere((d) => d.$id == docId);
+          if (idx != -1) _subjects[idx] = doc;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ تم إضافة المادة بنجاح")),
+          SnackBar(content: Text('add_subject_success'.tr(context))),
+        );
+        // Sync local cache with real ID
+        DataCacheService().removeStudySubjectFromCache(widget.studentId, docId);
+        final Map<String, dynamic> finalData = doc.toMap();
+        DataCacheService().upsertStudySubjectInCache(
+          widget.studentId,
+          finalData,
         );
       }
     } catch (e) {
       debugPrint("Error adding subject: $e");
+      // Rollback optimistic update
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في إضافة المادة: $e")));
+        setState(() {
+          _subjects.removeWhere((d) => d.$id == docId);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'add_subject_error'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -996,7 +1141,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
     if (!canDelete) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("❌ ليس لديك صلاحية لحذف هذه المادة")),
+          SnackBar(content: Text('no_delete_permission'.tr(context))),
         );
       }
       return;
@@ -1007,19 +1152,17 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
         await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text("حذف المادة"),
-            content: const Text(
-              "هل أنت متأكد من حذف هذه المادة وجميع درجاتها؟",
-            ),
+            title: Text('delete_subject'.tr(context)),
+            content: Text('delete_subject_warning'.tr(context)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text("إلغاء"),
+                child: Text('cancel_btn'.tr(context)),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text("حذف"),
+                child: Text('delete_btn'.tr(context)),
               ),
             ],
           ),
@@ -1028,26 +1171,57 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
 
     if (!confirmed) return;
 
+    models.Document? deletedDoc;
     try {
+      // 🚀 Optimistic UI: Remove from local state immediately
+      if (mounted) {
+        setState(() {
+          final idx = _subjects.indexWhere((d) => d.$id == subjectId);
+          if (idx != -1) {
+            deletedDoc = _subjects.removeAt(idx);
+          }
+        });
+        // 🚀 Cache update
+        DataCacheService().removeStudySubjectFromCache(
+          widget.studentId,
+          subjectId,
+        );
+      }
+
+      // 🚀 Offline Logic
+      final bool online = await SyncService().isOnline();
+      if (!online) {
+        await DataCacheService().addPendingOperation({
+          'type': 'delete_study_subject',
+          'data': {'subjectId': subjectId, 'studentId': widget.studentId},
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('offline_saved'.tr(context))));
+        }
+        return;
+      }
+
       // Delete grades first
-      final subjectDoc = _subjects.firstWhere((doc) => doc.$id == subjectId);
-      final subjectName = subjectDoc.data['name'];
-
-      final grades = await _databases.listDocuments(
-        databaseId: databaseId,
-        collectionId: studyGradesCollectionId,
-        queries: [
-          Query.equal('studentId', widget.studentId),
-          Query.equal('subject', subjectName),
-        ],
-      );
-
-      for (var grade in grades.documents) {
-        await _databases.deleteDocument(
+      final subjectName = deletedDoc?.data['name'];
+      if (subjectName != null) {
+        final grades = await _databases.listDocuments(
           databaseId: databaseId,
           collectionId: studyGradesCollectionId,
-          documentId: grade.$id,
+          queries: [
+            Query.equal('studentId', widget.studentId),
+            Query.equal('subject', subjectName),
+          ],
         );
+
+        for (var grade in grades.documents) {
+          await _databases.deleteDocument(
+            databaseId: databaseId,
+            collectionId: studyGradesCollectionId,
+            documentId: grade.$id,
+          );
+        }
       }
 
       await _databases.deleteDocument(
@@ -1058,14 +1232,25 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ تم حذف المادة وجميع بياناتها بنجاح")),
+          SnackBar(content: Text('delete_subject_success'.tr(context))),
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في حذف المادة: $e")));
+      debugPrint("Error deleting subject: $e");
+      // Rollback optimistic update
+      if (mounted && deletedDoc != null) {
+        setState(() {
+          _subjects.add(deletedDoc!);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'delete_subject_error'
+                  .tr(context)
+                  .replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -1075,15 +1260,15 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("إضافة مادة"),
+        title: Text('add_subject'.tr(context)),
         content: TextField(
           controller: nameController,
-          decoration: const InputDecoration(labelText: "اسم المادة"),
+          decoration: InputDecoration(labelText: 'subject_name'.tr(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -1091,9 +1276,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
                 if (!_canWrite) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("⚠️ ليس لديك صلاحية للإضافة"),
-                      ),
+                      SnackBar(content: Text('no_add_permission'.tr(context))),
                     );
                   }
                   return;
@@ -1102,7 +1285,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
                 if (context.mounted) Navigator.pop(context);
               }
             },
-            child: const Text("إضافة"),
+            child: Text('add_btn_action'.tr(context)),
           ),
         ],
       ),
@@ -1146,7 +1329,9 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
               const SizedBox(width: 8),
             Flexible(
               child: Text(
-                "مواد: ${widget.studentName}",
+                'subjects_of'
+                    .tr(context)
+                    .replaceFirst('%s', widget.studentName),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1169,7 +1354,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
               padding: const EdgeInsets.all(16),
               child: _buildStatItem(
                 Icons.subject,
-                "إجمالي المواد",
+                'total_subjects'.tr(context),
                 _subjects.length.toString(),
               ),
             ),
@@ -1177,14 +1362,19 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _subjects.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
-                        "لا توجد مواد مضافة",
-                        style: TextStyle(color: Colors.white, fontSize: 18),
+                        'no_subjects_added'.tr(context),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                        ),
                       ),
                     )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
+                  : RefreshIndicator(
+                      onRefresh: () async => await _fetchSubjects(),
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16),
                       itemCount: _subjects.length,
                       itemBuilder: (context, index) {
                         final doc = _subjects[index];
@@ -1210,6 +1400,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
                         );
                       },
                     ),
+                  ),
             ),
             if (_canWrite)
               Padding(
@@ -1218,7 +1409,7 @@ class _StudentDetailsPageState extends State<StudentDetailsPage> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.add_box),
-                    label: const Text("إضافة مادة"),
+                    label: Text('add_subject'.tr(context)),
                     onPressed: () => _showAddSubjectDialog(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange,
@@ -1292,19 +1483,26 @@ class _SubjectCard extends StatelessWidget {
           data['name'] ?? '',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        subtitle: Text("أضيفت بواسطة: ${data['createdByName'] ?? 'مستخدم'}"),
+        subtitle: Text(
+          'added_by_user'
+              .tr(context)
+              .replaceFirst(
+                '%s',
+                data['createdByName']?.toString() ?? 'user'.tr(context),
+              ),
+        ),
         trailing: PopupMenuButton<String>(
           onSelected: (v) {
             if (v == 'delete') onDelete();
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'delete',
               child: Row(
                 children: [
-                  Icon(Icons.delete, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text("حذف"),
+                  const Icon(Icons.delete, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Text('delete_btn'.tr(context)),
                 ],
               ),
             ),
@@ -1336,19 +1534,52 @@ class GradesChartPage extends StatefulWidget {
 
 class _GradesChartPageState extends State<GradesChartPage> {
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   List<ChartData> _chartData = [];
   bool _canWrite = true;
+  String? _currentUserId;
+  String? _currentUserName;
+  String? _teamId;
 
   RealtimeSubscription? _subscription;
 
   @override
   void initState() {
     super.initState();
+    _loadUserInfo();
     _loadCachedGrades();
     _fetchGrades();
     _subscribe();
+    _fetchTeamId();
     _checkPermissions();
+  }
+
+  Future<void> _loadUserInfo() async {
+    try {
+      final user = await UserService().getCurrentUser();
+      final name = await UserService().getCurrentUserName();
+      if (mounted) {
+        setState(() {
+          _currentUserId = user?.$id;
+          _currentUserName = name;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchTeamId() async {
+    try {
+      final groupDoc = await _databases.getDocument(
+        databaseId: databaseId,
+        collectionId: 'groups',
+        documentId: widget.groupId,
+      );
+      if (mounted) {
+        setState(() => _teamId = groupDoc.data['teamId']);
+      }
+    } catch (e) {
+      debugPrint("Error fetching teamId: $e");
+    }
   }
 
   Future<void> _loadCachedGrades() async {
@@ -1405,13 +1636,8 @@ class _GradesChartPageState extends State<GradesChartPage> {
           _chartData = docs;
         });
 
-        // 🚀 Cache grades
-        final cacheMaps = result.documents.map((doc) {
-          final m = Map<String, dynamic>.from(doc.data);
-          m['\$id'] = doc.$id;
-          m['\$createdAt'] = doc.$createdAt;
-          return m;
-        }).toList();
+        // 🚀 Cache grades securely using toMap()
+        final cacheMaps = result.documents.map((doc) => doc.toMap()).toList();
         DataCacheService().cacheStudyGrades(
           widget.studentId,
           widget.subject,
@@ -1437,37 +1663,116 @@ class _GradesChartPageState extends State<GradesChartPage> {
   }
 
   Future<void> _addGrade(String exam, double grade, double maxGrade) async {
-    try {
-      final user = await AppwriteService().account.get();
-      final userName = await UserService().getCurrentUserName();
+    final String docId = ID.unique(); // 🚀 Use consistent ID
+    final Map<String, dynamic> gradeData = {
+      'exam': exam,
+      'grade': grade,
+      'maxGrade': maxGrade,
+      'studentId': widget.studentId,
+      'subject': widget.subject,
+      'createdBy': _currentUserId ?? 'pending',
+      'createdByName': _currentUserName ?? 'pending',
+      'date': DateTime.now().toIso8601String(),
+      'groupId': widget.groupId,
+    };
 
-      await _databases.createDocument(
-        databaseId: databaseId,
-        collectionId: studyGradesCollectionId,
-        documentId: ID.unique(),
-        data: {
-          'exam': exam,
-          'grade': grade,
-          'maxGrade': maxGrade,
-          'studentId': widget.studentId,
-          'subject': widget.subject,
-          'createdBy': user.$id,
-          'createdByName': userName,
-          'date': DateTime.now().toIso8601String(),
-          'groupId': widget.groupId,
-        },
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ تم إضافة الدرجة بنجاح")),
+    // 🚀 Optimistic UI
+    final Map<String, dynamic> tempDocData = Map.from(gradeData);
+    tempDocData[r'$id'] = docId;
+
+    final tempChartData = ChartData(
+      docId,
+      exam,
+      grade,
+      maxGrade,
+      getRandomColor(),
+      createdBy: _currentUserName,
+      date: DateTime.now(),
+    );
+
+    if (mounted) {
+      setState(() {
+        _chartData.add(tempChartData);
+        _chartData.sort(
+          (a, b) =>
+              (a.date ?? DateTime(2000)).compareTo(b.date ?? DateTime(2000)),
         );
+      });
+      // 🚀 Cache update
+      DataCacheService().upsertStudyGradeInCache(
+        widget.studentId,
+        widget.subject,
+        tempDocData,
+      );
+    }
+
+    try {
+      final bool isConnected = await SyncService().isOnline();
+
+      if (isConnected) {
+        final doc = await _databases.createDocument(
+          databaseId: databaseId,
+          collectionId: studyGradesCollectionId,
+          documentId: docId, // 🚀 Use consistent docId
+          data: gradeData,
+          permissions: _teamId != null
+              ? [
+                  Permission.read(Role.team(_teamId!)),
+                  Permission.update(Role.team(_teamId!)),
+                  Permission.delete(Role.team(_teamId!)),
+                ]
+              : null,
+        );
+        if (mounted) {
+          setState(() {
+            _chartData.removeWhere((d) => d.id == docId);
+            _chartData.add(ChartData.fromAppwrite(doc));
+            _chartData.sort(
+              (a, b) => (a.date ?? DateTime(2000)).compareTo(
+                b.date ?? DateTime(2000),
+              ),
+            );
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('add_grade_success'.tr(context))),
+          );
+          // Sync cache
+          DataCacheService().removeStudyGradeFromCache(
+            widget.studentId,
+            widget.subject,
+            docId,
+          );
+          final Map<String, dynamic> finalData = doc.toMap();
+          DataCacheService().upsertStudyGradeInCache(
+            widget.studentId,
+            widget.subject,
+            finalData,
+          );
+        }
+      } else {
+        await DataCacheService().addPendingOperation({
+          'type': 'add_study_grade',
+          'data': {...gradeData, r'$id': docId, 'teamId': _teamId},
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('offline_saved'.tr(context))));
+        }
       }
     } catch (e) {
       debugPrint("Error adding grade: $e");
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في إضافة الدرجة: $e")));
+        setState(() {
+          _chartData.removeWhere((d) => d.id == docId);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'add_grade_error'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -1476,29 +1781,75 @@ class _GradesChartPageState extends State<GradesChartPage> {
     if (!_canWrite) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("⚠️ ليس لديك صلاحية للحذف")),
+          SnackBar(content: Text('no_delete_permission'.tr(context))),
         );
       }
       return;
     }
 
+    ChartData? deletedData;
     try {
-      await _databases.deleteDocument(
-        databaseId: databaseId,
-        collectionId: studyGradesCollectionId,
-        documentId: id,
-      );
+      // 🚀 Optimistic UI
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("✅ تم حذف الدرجة بنجاح")));
+        setState(() {
+          final idx = _chartData.indexWhere((d) => d.id == id);
+          if (idx != -1) {
+            deletedData = _chartData.removeAt(idx);
+          }
+        });
+        // 🚀 Cache update
+        DataCacheService().removeStudyGradeFromCache(
+          widget.studentId,
+          widget.subject,
+          id,
+        );
+      }
+
+      final bool isConnected = await SyncService().isOnline();
+
+      if (isConnected) {
+        await _databases.deleteDocument(
+          databaseId: databaseId,
+          collectionId: studyGradesCollectionId,
+          documentId: id,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('delete_grade_success'.tr(context))),
+          );
+        }
+      } else {
+        await DataCacheService().addPendingOperation({
+          'type': 'delete_study_grade',
+          'data': {
+            'gradeId': id,
+            'studentId': widget.studentId,
+            'subject': widget.subject,
+          },
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('offline_saved'.tr(context))));
+        }
       }
     } catch (e) {
       debugPrint("Error deleting grade: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ خطأ في حذف الدرجة: $e")));
+      if (mounted && deletedData != null) {
+        setState(() {
+          _chartData.add(deletedData!);
+          _chartData.sort(
+            (a, b) =>
+                (a.date ?? DateTime(2000)).compareTo(b.date ?? DateTime(2000)),
+          );
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'delete_grade_error'.tr(context).replaceFirst('%s', e.toString()),
+            ),
+          ),
+        );
       }
     }
   }
@@ -1513,22 +1864,22 @@ class _GradesChartPageState extends State<GradesChartPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("إضافة درجة"),
+        title: Text('add_grade'.tr(context)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: examController,
-              decoration: const InputDecoration(labelText: "اسم الامتحان"),
+              decoration: InputDecoration(labelText: 'exam_name'.tr(context)),
             ),
             TextField(
               controller: gradeController,
-              decoration: const InputDecoration(labelText: "الدرجة"),
+              decoration: InputDecoration(labelText: 'grade_value'.tr(context)),
               keyboardType: TextInputType.number,
             ),
             TextField(
               controller: maxController,
-              decoration: const InputDecoration(labelText: "من كام؟"),
+              decoration: InputDecoration(labelText: 'out_of'.tr(context)),
               keyboardType: TextInputType.number,
             ),
           ],
@@ -1536,7 +1887,7 @@ class _GradesChartPageState extends State<GradesChartPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text('cancel_btn'.tr(context)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -1548,9 +1899,7 @@ class _GradesChartPageState extends State<GradesChartPage> {
                 if (!_canWrite) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("⚠️ ليس لديك صلاحية للإضافة"),
-                      ),
+                      SnackBar(content: Text('no_add_permission'.tr(context))),
                     );
                   }
                   return;
@@ -1559,7 +1908,7 @@ class _GradesChartPageState extends State<GradesChartPage> {
                 if (context.mounted) Navigator.pop(context);
               }
             },
-            child: const Text("إضافة"),
+            child: Text('add_btn_action'.tr(context)),
           ),
         ],
       ),
@@ -1587,16 +1936,16 @@ class _GradesChartPageState extends State<GradesChartPage> {
             Expanded(
               flex: 2,
               child: _chartData.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
-                        "لا توجد بيانات للرسم البياني",
-                        style: TextStyle(color: Colors.white),
+                        'no_chart_data'.tr(context),
+                        style: const TextStyle(color: Colors.white),
                       ),
                     )
                   : SfCartesianChart(
                       primaryXAxis: CategoryAxis(),
                       title: ChartTitle(
-                        text: 'مستوى الطالب الدراسي',
+                        text: 'student_academic_level'.tr(context),
                         textStyle: const TextStyle(color: Colors.white),
                       ),
                       series: <CartesianSeries>[
@@ -1614,8 +1963,10 @@ class _GradesChartPageState extends State<GradesChartPage> {
             ),
             Expanded(
               flex: 3,
-              child: ListView.builder(
-                itemCount: _chartData.length,
+              child: RefreshIndicator(
+                onRefresh: () async => await _fetchGrades(),
+                child: ListView.builder(
+                  itemCount: _chartData.length,
                 itemBuilder: (context, index) {
                   final data = _chartData[index];
                   return Card(
@@ -1629,7 +1980,10 @@ class _GradesChartPageState extends State<GradesChartPage> {
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       subtitle: Text(
-                        "الدرجة: ${data.grade} / ${data.maxGrade}",
+                        'grade_label'
+                            .tr(context)
+                            .replaceFirst('%s', data.grade.toString())
+                            .replaceFirst('%s', data.maxGrade.toString()),
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
@@ -1640,6 +1994,7 @@ class _GradesChartPageState extends State<GradesChartPage> {
                 },
               ),
             ),
+            ),
             if (_canWrite)
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -1647,7 +2002,7 @@ class _GradesChartPageState extends State<GradesChartPage> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.add),
-                    label: const Text("إضافة درجة"),
+                    label: Text('add_grade'.tr(context)),
                     onPressed: () => _showAddGradeDialog(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange,

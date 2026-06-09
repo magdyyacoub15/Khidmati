@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 Added for kIsWeb
 import 'package:intl/intl.dart';
 import 'package:appwrite/appwrite.dart';
 import 'package:appwrite/models.dart' as models;
@@ -6,18 +7,19 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import '../services/user_service.dart';
 import '../services/permission_service.dart';
-import '../services/appwrite_service.dart';
+import '../services/image_service.dart';
+import '../services/image_cache_service.dart';
+import '../services/sync_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'dart:io';
-import '../services/image_service.dart';
-import '../services/image_cache_service.dart';
-import '../services/data_cache_service.dart';
-import '../services/sync_service.dart';
+import 'package:universal_io/io.dart'; // 🚀 Kept for mobile-specific File usage
+import '../services/appwrite_service.dart';
+import '../services/data_cache_service.dart'; // 🚀 Added Cache
 import '../widgets/full_screen_image.dart';
 import '../models/kid.dart';
+import '../l10n/app_translations.dart';
 
 // Appwrite Collection constants
 const String databaseId = 'main_db';
@@ -50,7 +52,8 @@ class AttendanceKid {
   String? get localImagePath => kid.localImagePath;
   String get address => kid.address;
   List<String> get phones => kid.phones;
-  String getPhoneWithOwner(String p) => kid.getPhoneWithOwner(p);
+  String getPhoneWithOwner(BuildContext context, String p) =>
+      kid.getPhoneWithOwner(context, p);
   String? get locationUrl => kid.locationUrl;
 
   AttendanceKid copyWithStatus({
@@ -97,7 +100,7 @@ class _AttendancePageState extends State<AttendancePage> {
   final TextEditingController _searchController = TextEditingController();
   String? _teamId;
   DateTime? _selectedServantDateOfBirth;
-  File? _imageFile;
+  XFile? _imageFile; // 🚀 Changed from File? to XFile? for Web support
 
   // void initState() { super.initState(); _fetchTeamId(); } // Removed duplicate
   Future<void> _fetchTeamId() async {
@@ -130,11 +133,12 @@ class _AttendancePageState extends State<AttendancePage> {
   final Map<String, AttendanceKid> _optimisticUpdates = {};
 
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   final Account _account = AppwriteService().account;
 
   RealtimeSubscription? _roleSubscription;
   RealtimeSubscription? _statusSubscription;
+  StreamSubscription? _syncSubscription; // 🚀 Sync Listener
 
   // Local Data
   List<Kid> _baseKidsList = [];
@@ -153,6 +157,15 @@ class _AttendancePageState extends State<AttendancePage> {
     _subscribeToStatus();
     _fetchTeamId();
     _checkSubscriptionStatus(); // 🚀 Verify subscription
+
+    // 🚀 Refresh UI when sync completes
+    _syncSubscription = SyncService().onSyncComplete.listen((_) {
+      if (mounted) {
+        debugPrint("🔄 Sync Complete! Refreshing Attendance Data...");
+        _fetchBaseKids();
+        _fetchAttendanceStatus();
+      }
+    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.groupId.isNotEmpty) {
@@ -192,7 +205,7 @@ class _AttendancePageState extends State<AttendancePage> {
             final Map<String, models.Document> restoredMap = {};
             cachedStatus.forEach((key, data) {
               restoredMap[key] = models.Document(
-                $id: data['\$id'] ?? 'cached',
+                $id: data['\$id'] ?? 'cached', // 🚀 Restore real ID
                 $collectionId: attendanceStatusCollectionId,
                 $databaseId: databaseId,
                 $createdAt: data['\$createdAt'] ?? '',
@@ -214,6 +227,7 @@ class _AttendancePageState extends State<AttendancePage> {
     _roleSubscription?.close();
     _statusSubscription?.close();
     _kidsSubscription?.close();
+    _syncSubscription?.cancel(); // 🚀 Cancel Sync Listener
     SyncService().stopConnectivityListener(); // 🚀 Stop Listener
     super.dispose();
   }
@@ -228,7 +242,7 @@ class _AttendancePageState extends State<AttendancePage> {
   // -------------------------------------------------------------------------
 
   Future<void> _fetchBaseKids() async {
-    final String collectionId = (widget.type == "خدام")
+    final String collectionId = (widget.type == "servants")
         ? servantsCollectionId
         : studentsCollectionId;
 
@@ -274,6 +288,7 @@ class _AttendancePageState extends State<AttendancePage> {
                 kidGradeNorm.contains(targetGradeNorm) ||
                 targetGradeNorm.contains(kidGradeNorm);
           }).toList();
+          _isLoading = false; // 🚀 Ensures UI doesn't hang offline
         });
       }
     }
@@ -301,7 +316,8 @@ class _AttendancePageState extends State<AttendancePage> {
       // Cache the result
       final Map<String, dynamic> statusDataToCache = {};
       statusMap.forEach((key, doc) {
-        statusDataToCache[key] = doc.data;
+        statusDataToCache[key] = doc
+            .toMap(); // 🚀 PERSIST FULL DOCUMENT (including $id)
       });
       await DataCacheService().cacheAttendanceStatusMap(
         widget.groupId,
@@ -326,7 +342,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
       final Map<String, models.Document> restoredMap = {};
       cachedMap.forEach((key, data) {
-        // Reconstruct Document (mocking $id, $collectionId etc if needed or acceptable)
+        // Reconstruct Document (using real $id from cache)
         restoredMap[key] = models.Document(
           $id: data['\$id'] ?? 'cached',
           $collectionId: attendanceStatusCollectionId,
@@ -341,6 +357,7 @@ class _AttendancePageState extends State<AttendancePage> {
       if (mounted) {
         setState(() {
           _liveStatusMap = restoredMap;
+          _isLoading = false; // 🚀 Prevents hanging UI offline
         });
       }
     }
@@ -353,31 +370,132 @@ class _AttendancePageState extends State<AttendancePage> {
       'databases.$databaseId.collections.$attendanceStatusCollectionId.documents',
     ]);
 
-    _statusSubscription!.stream.listen((event) {
-      if (!mounted) return;
-      final payload = event.payload;
+    _statusSubscription!.stream.listen(
+      (event) {
+        if (!mounted) return;
+        final payload = event.payload;
+        final String docId = payload['\$id'];
 
-      if (payload['groupId'] == widget.groupId &&
-          payload['type'] == widget.type &&
-          _normalizeGradeText(payload['grade'] ?? '') ==
-              _normalizeGradeText(widget.grade)) {
-        final String name = payload['name'];
-        final isDelete = event.events.any((e) => e.contains('.delete'));
+        final String? pGroupId = payload['groupId'];
+        final String? pType = payload['type'];
+        final String? pGrade = payload['grade'];
+        final String? nameInPayload = payload['name'];
 
-        setState(() {
-          if (isDelete) {
-            _liveStatusMap.remove(name);
-          } else {
-            _liveStatusMap[name] = models.Document.fromMap(payload);
+        // 1. Determine if it belongs to this page
+        bool belongsToThisPage = false;
+        String? existingKey;
+
+        // Normalize type for comparison (Handle mixed Arabic/English)
+        String normalizeType(String? t) {
+          if (t == null) return '';
+          final low = t.toLowerCase().trim();
+          if (low == 'طلاب' || low == 'attendees') return 'attendees';
+          if (low == 'خدام' || low == 'servants') return 'servants';
+          return low;
+        }
+
+        final pTypeNorm = normalizeType(pType);
+        final wTypeNorm = normalizeType(widget.type);
+
+        // Check by existing doc ID first
+        for (var entry in _liveStatusMap.entries) {
+          if (entry.value.$id == docId) {
+            existingKey = entry.key;
+            belongsToThisPage = true;
+            break;
           }
-        });
-        _syncStatusCache();
-      }
-    });
+        }
+
+        // If not found by ID, check by filter (for new documents/creates/deletes)
+        if (!belongsToThisPage && pGroupId != null) {
+          final pGradeNorm = _normalizeGradeText(pGrade ?? '');
+          final wGradeNorm = _normalizeGradeText(widget.grade);
+
+          if (pGroupId == widget.groupId &&
+              pTypeNorm == wTypeNorm &&
+              (pGradeNorm == wGradeNorm ||
+                  pGradeNorm.contains(wGradeNorm) ||
+                  wGradeNorm.contains(pGradeNorm))) {
+            belongsToThisPage = true;
+          }
+        }
+
+        // 🚀 FALLBACK: If we still haven't matched by ID, try matching by name
+        // (Useful if the local doc was loaded from an old cache with 'cached' ID or is pending)
+        if (belongsToThisPage && existingKey == null && nameInPayload != null) {
+          if (_liveStatusMap.containsKey(nameInPayload)) {
+            final existingDoc = _liveStatusMap[nameInPayload]!;
+            if (existingDoc.$id == 'cached' ||
+                existingDoc.$id.startsWith('pending_')) {
+              existingKey = nameInPayload;
+              debugPrint(
+                "   └─ Found by NAME fallback (ID was '${existingDoc.$id}')",
+              );
+            }
+          }
+        }
+
+        debugPrint(
+          "📡 Realtime Event: Doc=$docId, Type=$pType, Grade=$pGrade, Belongs=$belongsToThisPage, ExistingKey=$existingKey",
+        );
+        if (!belongsToThisPage) {
+          debugPrint(
+            "   └─ Mismatch Detail: GID(${pGroupId == widget.groupId}) Type(${normalizeType(pType) == normalizeType(widget.type)}) Grade(${_normalizeGradeText(pGrade ?? '') == _normalizeGradeText(widget.grade)})",
+          );
+        }
+
+        if (belongsToThisPage) {
+          final isDelete = event.events.any((e) => e.contains('.delete'));
+
+          setState(() {
+            if (isDelete) {
+              if (existingKey != null) {
+                _liveStatusMap.remove(existingKey);
+              } else if (nameInPayload != null) {
+                _liveStatusMap.remove(nameInPayload);
+              }
+            } else {
+              final String? targetKey = existingKey ?? nameInPayload;
+
+              if (targetKey != null) {
+                if (existingKey != null) {
+                  // Merge partial payload
+                  final existingDoc = _liveStatusMap[existingKey]!;
+                  final mergedMap = {...existingDoc.data, ...payload};
+
+                  // Ensure system fields are correct for fromMap
+                  mergedMap['\$id'] = docId;
+                  mergedMap['\$collectionId'] = existingDoc.$collectionId;
+                  mergedMap['\$databaseId'] = existingDoc.$databaseId;
+                  mergedMap['\$createdAt'] = existingDoc.$createdAt;
+                  mergedMap['\$updatedAt'] =
+                      payload['\$updatedAt'] ?? existingDoc.$updatedAt;
+                  mergedMap['\$permissions'] =
+                      payload['\$permissions'] ?? existingDoc.$permissions;
+
+                  _liveStatusMap[existingKey] = models.Document.fromMap(
+                    mergedMap,
+                  );
+                } else {
+                  // New document for this page
+                  _liveStatusMap[targetKey] = models.Document.fromMap(payload);
+                }
+                // 🚀 SUCCESS! Clear optimistic state for this name
+                _optimisticUpdates.remove(targetKey);
+              }
+            }
+          });
+          _syncStatusCache();
+        }
+      },
+      onError: (e) {
+        debugPrint("❌ Realtime Status Subscription Error: $e");
+      },
+    );
   }
 
   void _subscribeToKidsList() {
-    final String collectionId = (widget.type == "خدام")
+    final String collectionId = (widget.type == "servants")
         ? servantsCollectionId
         : studentsCollectionId;
 
@@ -385,40 +503,72 @@ class _AttendancePageState extends State<AttendancePage> {
       'databases.$databaseId.collections.$collectionId.documents',
     ]);
 
-    _kidsSubscription!.stream.listen((event) {
-      if (!mounted) return;
-      final payload = event.payload;
+    _kidsSubscription!.stream.listen(
+      (event) {
+        if (!mounted) return;
+        final payload = event.payload;
+        final String kidId = payload['\$id'];
 
-      // Filter by Group and Grade
-      if (payload['groupId'] != widget.groupId) return;
+        final String? pGroupId = payload['groupId'];
+        final String? pGrade = payload['grade'];
 
-      final pGrade = _normalizeGradeText(payload['grade'] ?? '');
-      final wGrade = _normalizeGradeText(widget.grade);
+        // 1. Determine if it belongs to this page
+        bool belongsToThisPage = false;
+        int existingIndex = _baseKidsList.indexWhere((k) => k.id == kidId);
 
-      // Strict match for grade (or if grade is part of it)
-      if (pGrade != wGrade &&
-          !pGrade.contains(wGrade) &&
-          !wGrade.contains(pGrade)) {
-        return;
-      }
-
-      final isDelete = event.events.any((e) => e.contains('.delete'));
-      final kid = Kid.fromAppwrite(models.Document.fromMap(payload));
-
-      setState(() {
-        if (isDelete) {
-          _baseKidsList.removeWhere((k) => k.id == kid.id);
-        } else {
-          // Check if exists
-          final index = _baseKidsList.indexWhere((k) => k.id == kid.id);
-          if (index != -1) {
-            _baseKidsList[index] = kid; // Update
-          } else {
-            _baseKidsList.add(kid); // Add
+        if (existingIndex != -1) {
+          belongsToThisPage = true;
+        } else if (pGroupId != null) {
+          if (pGroupId == widget.groupId) {
+            final pgNorm = _normalizeGradeText(pGrade ?? '');
+            final wgNorm = _normalizeGradeText(widget.grade);
+            if (pgNorm == wgNorm ||
+                pgNorm.contains(wgNorm) ||
+                wgNorm.contains(pgNorm)) {
+              belongsToThisPage = true;
+            }
           }
         }
-      });
-    });
+
+        if (belongsToThisPage) {
+          final isDelete = event.events.any((e) => e.contains('.delete'));
+
+          setState(() {
+            if (isDelete) {
+              _baseKidsList.removeWhere((k) => k.id == kidId);
+            } else {
+              if (existingIndex != -1) {
+                // Merge partial kid update
+                final existing = _baseKidsList[existingIndex];
+                _baseKidsList[existingIndex] = existing.copyWithStatus(
+                  isVisited: payload['isVisited'],
+                  name: payload['name'],
+                  address: payload['address'],
+                  grade: payload['grade'],
+                  photoUrl: payload['photoUrl'],
+                  phoneRequired: payload['phoneRequired'],
+                  phoneOptional: payload['phoneOptional'],
+                  phoneRequiredOwner: payload['phoneRequiredOwner'],
+                  phoneOptionalOwner: payload['phoneOptionalOwner'],
+                  locationUrl: payload['locationUrl'],
+                  dateOfBirth: payload['dateOfBirth'] != null
+                      ? DateTime.tryParse(payload['dateOfBirth'].toString())
+                      : null,
+                );
+              } else {
+                // New kid
+                _baseKidsList.add(
+                  Kid.fromAppwrite(models.Document.fromMap(payload)),
+                );
+              }
+            }
+          });
+        }
+      },
+      onError: (e) {
+        debugPrint("❌ Realtime Kids Subscription Error: $e");
+      },
+    );
   }
 
   Future<void> _loadUserRole() async {
@@ -491,16 +641,17 @@ class _AttendancePageState extends State<AttendancePage> {
     if (mounted) {
       setState(() {
         _currentUserRole = data['role'] ?? 'user';
-        String rawRole = data['role'] ?? 'user';
+        final rawRole = data['role'] ?? 'user';
         if (rawRole.startsWith('class_supervisor_grade_')) {
-          // Extract everything after the prefix as the grade name
           _currentUserGradeNumber = rawRole
               .replaceFirst('class_supervisor_grade_', '')
               .trim();
         } else {
           _currentUserGradeNumber = 'none';
         }
-        // _currentUserName removed as it is unused
+
+        // 🚀 Update teamId/groupId if present in payload (Realtime refresh)
+        if (data['teamId'] != null) _teamId = data['teamId'];
       });
     }
   }
@@ -537,7 +688,7 @@ class _AttendancePageState extends State<AttendancePage> {
     // 1. Admin & General Supervisor: Full Access
     if (isUserAdmin || isUserGeneralSupervisor) return true;
 
-    final isKidsAttendance = widget.type != "خدام";
+    final isKidsAttendance = widget.type != 'servants';
 
     // 2. Class Supervisor
     if (_currentUserRole.startsWith('class_supervisor_grade_')) {
@@ -576,26 +727,30 @@ class _AttendancePageState extends State<AttendancePage> {
   Future<void> _togglePresent(AttendanceKid kid) async {
     if (!_canWrite) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط."),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("readonly_expired".tr(context))));
       }
       return;
     }
 
+    // 🚀 Ensure teamId is loaded for permissions
+    if (_teamId == null || _teamId!.isEmpty) {
+      await _fetchTeamId();
+    }
+
     final currentUserName = await UserService().getCurrentUserName();
+    if (!mounted) return;
     final newIsPresent = !kid.isPresent;
 
     if (!_canToggleAttendance(kid, newIsPresent, currentUserName)) {
       String message;
-      if (widget.type != "خدام") {
+      if (widget.type != 'servants') {
         message = newIsPresent
-            ? "❌ غير مسموح لك بتسجيل حضور المخدومين."
-            : "⚠️ لا يمكنك إلغاء التسجيل. (للمسجل الأصلي أو الأدوار الأعلى).";
+            ? 'not_allowed_attendees'.tr(context)
+            : 'cannot_unmark'.tr(context);
       } else {
-        message = "❌ غير مسموح لك بتعديل حالة حضور الخدام في هذا الصف.";
+        message = 'not_allowed_servants'.tr(context);
       }
       if (mounted) {
         ScaffoldMessenger.of(
@@ -695,6 +850,7 @@ class _AttendancePageState extends State<AttendancePage> {
         'groupId': widget.groupId,
         'markedBy': currentUserName,
         'timestamp': DateTime.now().toIso8601String(),
+        'teamId': _teamId, // 🚀 Store teamId for permissions during sync
       };
 
       DataCacheService().addPendingOperation({
@@ -717,11 +873,12 @@ class _AttendancePageState extends State<AttendancePage> {
       }
       _syncStatusCache();
     } finally {
-      if (mounted) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) setState(() => _optimisticUpdates.remove(kid.name));
-        });
-      }
+      // 🚀 Remove from Optimistic state ONLY if internet is likely failed or very fast
+      // For a more robust approach, we RELY on _subscribeToStatus to remove it
+      // but we add a fallback timeout just in case Realtime fails entirely.
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _optimisticUpdates.remove(kid.name));
+      });
     }
   }
 
@@ -729,9 +886,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (!_canWrite) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط."),
-          ),
+          SnackBar(content: Text('subscription_expired_read_only'.tr(context))),
         );
       }
       return;
@@ -741,7 +896,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (_currentUserRole == 'admin' ||
         _currentUserRole == 'general_supervisor') {
       isAllowed = true;
-    } else if (widget.type != "خدام") {
+    } else if (widget.type != "servants") {
       isAllowed = true;
     } else {
       if (_currentUserRole.startsWith('class_supervisor_grade_')) {
@@ -758,7 +913,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (!isAllowed) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("❌ غير مسموح لك بتعديل الملحوظات هنا.")),
+          SnackBar(content: Text('not_allowed_notes'.tr(context))),
         );
       }
       return;
@@ -768,25 +923,30 @@ class _AttendancePageState extends State<AttendancePage> {
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text("📝 تعديل ملحوظة لـ ${kid.name}"),
+        title: Text('edit_note_for'.tr(context).replaceFirst('%s', kid.name)),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(hintText: "اكتب الملحوظة هنا"),
+          decoration: InputDecoration(hintText: 'write_note_here'.tr(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("إلغاء"),
+            child: Text("cancel".tr(context)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text("حفظ"),
+            child: Text("save".tr(context)),
           ),
         ],
       ),
     );
 
     if (result != null) {
+      // 🚀 Ensure teamId is loaded for permissions
+      if (_teamId == null || _teamId!.isEmpty) {
+        await _fetchTeamId();
+      }
+
       try {
         final existingDoc = _liveStatusMap[kid.name];
         if (existingDoc != null) {
@@ -814,6 +974,13 @@ class _AttendancePageState extends State<AttendancePage> {
               'groupId': widget.groupId,
               'timestamp': DateTime.now().toIso8601String(),
             },
+            permissions: (_teamId != null && _teamId!.isNotEmpty)
+                ? [
+                    Permission.read(Role.team(_teamId!)),
+                    Permission.update(Role.team(_teamId!)),
+                    Permission.delete(Role.team(_teamId!)),
+                  ]
+                : null,
           );
           if (mounted) {
             setState(() => _liveStatusMap[kid.name] = newDoc);
@@ -835,7 +1002,10 @@ class _AttendancePageState extends State<AttendancePage> {
 
         DataCacheService().addPendingOperation({
           'type': 'attendance_note',
-          'data': operationData,
+          'data': {
+            ...operationData,
+            'teamId': _teamId, // 🚀 Ensure teamId is stored
+          },
         });
 
         if (mounted) {
@@ -894,7 +1064,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (!_canWrite) {
       return;
     }
-    if (widget.type != "خدام") {
+    if (widget.type != "servants") {
       return;
     }
 
@@ -911,7 +1081,7 @@ class _AttendancePageState extends State<AttendancePage> {
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: const Text("إضافة خادم جديد"),
+            title: Text('add_new_servant'.tr(context)),
             content: Form(
               key: formKey,
               child: SingleChildScrollView(
@@ -921,47 +1091,57 @@ class _AttendancePageState extends State<AttendancePage> {
                     // Image Picker Widget
                     GestureDetector(
                       onTap: () async {
+                        final editImageTitle = 'edit_image'.tr(context);
                         final ImagePicker picker = ImagePicker();
                         final XFile? image = await picker.pickImage(
                           source: ImageSource.gallery,
                           imageQuality: 70,
                         );
 
+                        if (!mounted) return;
+
                         if (image != null) {
-                          File file = File(image.path);
+                          // 🚀 Skip Cropper/Compression on Web for now
+                          if (kIsWeb) {
+                            setDialogState(() {
+                              _imageFile = image; // 🚀 No crop/compress on web
+                            });
+                          } else {
+                            File file = File(image.path);
 
-                          // ✂️ Cropping
-                          final croppedFile = await ImageCropper().cropImage(
-                            sourcePath: file.path,
-                            uiSettings: [
-                              AndroidUiSettings(
-                                toolbarTitle: 'تعديل الصورة',
-                                toolbarColor: Colors.deepOrange,
-                                toolbarWidgetColor: Colors.white,
-                                initAspectRatio: CropAspectRatioPreset.square,
-                                lockAspectRatio: false,
-                              ),
-                              IOSUiSettings(title: 'تعديل الصورة'),
-                            ],
-                          );
+                            // ✂️ Cropping
+                            final croppedFile = await ImageCropper().cropImage(
+                              sourcePath: file.path,
+                              uiSettings: [
+                                AndroidUiSettings(
+                                  toolbarTitle: editImageTitle,
+                                  toolbarColor: Colors.deepOrange,
+                                  toolbarWidgetColor: Colors.white,
+                                  initAspectRatio: CropAspectRatioPreset.square,
+                                  lockAspectRatio: false,
+                                ),
+                                IOSUiSettings(title: editImageTitle),
+                              ],
+                            );
 
-                          if (croppedFile != null) {
-                            file = File(croppedFile.path);
-                            final String targetPath =
-                                '${file.parent.path}/${DateTime.now().millisecondsSinceEpoch}_compressed.jpg';
-                            final XFile? compressed =
-                                await FlutterImageCompress.compressAndGetFile(
-                                  file.absolute.path,
-                                  targetPath,
-                                  quality: 50,
-                                  minWidth: 500,
-                                  minHeight: 500,
-                                );
+                            if (croppedFile != null) {
+                              file = File(croppedFile.path);
+                              final String targetPath =
+                                  '${file.parent.path}/${DateTime.now().millisecondsSinceEpoch}_compressed.jpg';
+                              final XFile? compressed =
+                                  await FlutterImageCompress.compressAndGetFile(
+                                    file.absolute.path,
+                                    targetPath,
+                                    quality: 50,
+                                    minWidth: 500,
+                                    minHeight: 500,
+                                  );
 
-                            if (compressed != null) {
-                              setDialogState(() {
-                                _imageFile = File(compressed.path);
-                              });
+                              if (compressed != null) {
+                                setDialogState(() {
+                                  _imageFile = compressed; // 🚀 Store as XFile
+                                });
+                              }
                             }
                           }
                         }
@@ -970,7 +1150,10 @@ class _AttendancePageState extends State<AttendancePage> {
                         radius: 40,
                         backgroundColor: Colors.grey.shade200,
                         backgroundImage: _imageFile != null
-                            ? FileImage(_imageFile!)
+                            ? (kIsWeb
+                                  ? NetworkImage(_imageFile!.path)
+                                  : FileImage(File(_imageFile!.path))
+                                        as ImageProvider)
                             : null,
                         child: _imageFile == null
                             ? const Icon(
@@ -984,15 +1167,16 @@ class _AttendancePageState extends State<AttendancePage> {
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: "اسم الخادم",
+                      decoration: InputDecoration(
+                        labelText: 'servant_name'.tr(context),
                       ),
-                      validator: (v) => v!.isEmpty ? "مطلوب" : null,
+                      validator: (v) =>
+                          v!.isEmpty ? 'required'.tr(context) : null,
                     ),
                     TextFormField(
                       controller: phoneController,
-                      decoration: const InputDecoration(
-                        labelText: "رقم الموبايل (اختياري)",
+                      decoration: InputDecoration(
+                        labelText: 'mobile_optional'.tr(context),
                       ),
                       keyboardType: TextInputType.phone,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -1004,11 +1188,9 @@ class _AttendancePageState extends State<AttendancePage> {
                       children: [
                         Expanded(
                           child: Text(
-                            _selectedServantDateOfBirth == null
-                                ? "لم يتم الاختيار"
-                                : DateFormat(
-                                    'yyyy-MM-dd',
-                                  ).format(_selectedServantDateOfBirth!),
+                            DateFormat.yMMMd(
+                              Localizations.localeOf(context).languageCode,
+                            ).format(_selectedServantDateOfBirth!),
                           ),
                         ),
                         TextButton(
@@ -1026,7 +1208,7 @@ class _AttendancePageState extends State<AttendancePage> {
                               );
                             }
                           },
-                          child: const Text("اختر التاريخ"),
+                          child: Text('choose_date'.tr(context)),
                         ),
                       ],
                     ),
@@ -1037,7 +1219,7 @@ class _AttendancePageState extends State<AttendancePage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("إلغاء"),
+                child: Text('cancel'.tr(context)),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -1053,7 +1235,7 @@ class _AttendancePageState extends State<AttendancePage> {
                     );
                   }
                 },
-                child: const Text("إضافة"),
+                child: Text('add'.tr(context)),
               ),
             ],
           ),
@@ -1067,10 +1249,17 @@ class _AttendancePageState extends State<AttendancePage> {
     String grade,
     String phone,
     DateTime dob,
-    File? imageFile,
+    XFile? imageFile, // 🚀 Changed from File?
   ) async {
+    // 🚀 Ensure teamId is loaded for permissions
+    if (_teamId == null || _teamId!.isEmpty) {
+      await _fetchTeamId();
+    }
+
+    if (!mounted) return;
+
     if (!_canWrite) {
-      _showSnackbar("⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط.");
+      _showSnackbar('subscription_expired_read_only'.tr(context));
       return;
     }
     // ⚡ Optimistic Update
@@ -1128,7 +1317,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ تم إضافة الخادم بنجاح")),
+          SnackBar(content: Text('servant_added_success'.tr(context))),
         );
       }
     } catch (e) {
@@ -1145,7 +1334,7 @@ class _AttendancePageState extends State<AttendancePage> {
           'addedAt': DateTime.now().toIso8601String(),
           'groupId': widget.groupId,
           'localImagePath': imageFile?.path,
-          'teamId': _teamId,
+          'teamId': _teamId, // 🚀 Already present but being explicit
         },
       });
 
@@ -1167,12 +1356,12 @@ class _AttendancePageState extends State<AttendancePage> {
     required String name,
     required String phone,
     required DateTime dateOfBirth,
-    File? imageFile,
+    XFile? imageFile, // 🚀 Changed from File?
     String? oldPhotoUrl,
     bool isDeletePhoto = false,
   }) async {
     if (!_canWrite) {
-      _showSnackbar("⚠️ انتهت صلاحية الاشتراك. المجلد للقراءة فقط.");
+      _showSnackbar('subscription_expired_read_only'.tr(context));
       return;
     }
     // ⚡ Optimistic Update using index
@@ -1235,7 +1424,7 @@ class _AttendancePageState extends State<AttendancePage> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("✅ تم التعديل بنجاح")));
+        ).showSnackBar(SnackBar(content: Text('edit_success'.tr(context))));
       }
     } catch (e) {
       debugPrint("Edit servant error: $e. Saving to pending operations.");
@@ -1270,7 +1459,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("ℹ️ تم حفظ التعديلات محلياً.")),
+          SnackBar(content: Text('changes_saved_locally'.tr(context))),
         );
       }
     }
@@ -1287,9 +1476,9 @@ class _AttendancePageState extends State<AttendancePage> {
       return;
     }
     if (!_canWrite || _currentUserRole != 'admin') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("❌ ليس لديك صلاحية التعديل.")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('no_edit_permission'.tr(context))));
       return;
     }
 
@@ -1304,7 +1493,7 @@ class _AttendancePageState extends State<AttendancePage> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text("تعديل بيانات الخادم"),
+          title: Text('edit_servant_data'.tr(context)),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -1314,13 +1503,25 @@ class _AttendancePageState extends State<AttendancePage> {
                   // Image Picker for Edit
                   GestureDetector(
                     onTap: () async {
+                      final editImageTitle = 'edit_image'.tr(context);
                       final ImagePicker picker = ImagePicker();
                       final XFile? image = await picker.pickImage(
                         source: ImageSource.gallery,
                         imageQuality: 70,
                       );
 
+                      if (!mounted) return;
+
                       if (image != null) {
+                        // 🚀 Skip Cropper/Compression on Web for now
+                        if (kIsWeb) {
+                          setDialogState(() {
+                            _imageFile = image;
+                            isPhotoDeleted = false;
+                          });
+                          return;
+                        }
+
                         File file = File(image.path);
 
                         // ✂️ Cropping
@@ -1328,13 +1529,13 @@ class _AttendancePageState extends State<AttendancePage> {
                           sourcePath: file.path,
                           uiSettings: [
                             AndroidUiSettings(
-                              toolbarTitle: 'تعديل الصورة',
+                              toolbarTitle: editImageTitle,
                               toolbarColor: Colors.deepOrange,
                               toolbarWidgetColor: Colors.white,
                               initAspectRatio: CropAspectRatioPreset.square,
                               lockAspectRatio: false,
                             ),
-                            IOSUiSettings(title: 'تعديل الصورة'),
+                            IOSUiSettings(title: editImageTitle),
                           ],
                         );
 
@@ -1353,7 +1554,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
                           if (compressed != null) {
                             setDialogState(() {
-                              _imageFile = File(compressed.path);
+                              _imageFile = compressed; // 🚀 Store as XFile
                               isPhotoDeleted = false;
                             });
                           }
@@ -1364,7 +1565,10 @@ class _AttendancePageState extends State<AttendancePage> {
                       radius: 40,
                       backgroundColor: Colors.grey.shade200,
                       backgroundImage: _imageFile != null
-                          ? FileImage(_imageFile!)
+                          ? (kIsWeb
+                                ? NetworkImage(_imageFile!.path)
+                                : FileImage(File(_imageFile!.path))
+                                      as ImageProvider)
                           : (!isPhotoDeleted &&
                                 currentPhotoUrl != null &&
                                 currentPhotoUrl.isNotEmpty)
@@ -1391,29 +1595,34 @@ class _AttendancePageState extends State<AttendancePage> {
                       (!isPhotoDeleted &&
                           currentPhotoUrl != null &&
                           currentPhotoUrl.isNotEmpty))
-                    TextButton.icon(
-                      onPressed: () {
-                        setDialogState(() {
-                          _imageFile = null;
-                          isPhotoDeleted = true;
-                        });
-                      },
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      label: const Text(
-                        "حذف الصورة",
-                        style: TextStyle(color: Colors.red),
+                    if (currentPhotoUrl != null &&
+                        currentPhotoUrl.isNotEmpty &&
+                        !isPhotoDeleted)
+                      TextButton(
+                        onPressed: () {
+                          setDialogState(() {
+                            isPhotoDeleted = true;
+                            _imageFile = null;
+                          });
+                        },
+                        child: Text(
+                          'delete_image'.tr(context),
+                          style: TextStyle(color: Colors.red),
+                        ),
                       ),
-                    ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: "اسم الخادم"),
-                    validator: (v) => v!.isEmpty ? "مطلوب" : null,
+                    decoration: InputDecoration(
+                      labelText: 'servant_name'.tr(context),
+                    ),
+                    validator: (v) =>
+                        v!.isEmpty ? 'required'.tr(context) : null,
                   ),
                   TextFormField(
                     controller: phoneController,
-                    decoration: const InputDecoration(
-                      labelText: "رقم الموبايل (اختياري)",
+                    decoration: InputDecoration(
+                      labelText: 'mobile_optional'.tr(context),
                     ),
                     keyboardType: TextInputType.phone,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -1423,7 +1632,9 @@ class _AttendancePageState extends State<AttendancePage> {
                     children: [
                       Expanded(
                         child: Text(
-                          DateFormat('yyyy-MM-dd').format(selectedDateOfBirth),
+                          DateFormat.yMMMd(
+                            Localizations.localeOf(context).languageCode,
+                          ).format(selectedDateOfBirth),
                         ),
                       ),
                       TextButton(
@@ -1439,7 +1650,7 @@ class _AttendancePageState extends State<AttendancePage> {
                             setDialogState(() => selectedDateOfBirth = picked);
                           }
                         },
-                        child: const Text("اختر التاريخ"),
+                        child: Text('choose_date'.tr(context)),
                       ),
                     ],
                   ),
@@ -1450,7 +1661,7 @@ class _AttendancePageState extends State<AttendancePage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("إلغاء"),
+              child: Text('cancel'.tr(context)),
             ),
             ElevatedButton(
               onPressed: () {
@@ -1467,7 +1678,7 @@ class _AttendancePageState extends State<AttendancePage> {
                   );
                 }
               },
-              child: const Text("حفظ"),
+              child: Text('save'.tr(context)),
             ),
           ],
         ),
@@ -1525,9 +1736,17 @@ class _AttendancePageState extends State<AttendancePage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildStatItem("الإجمالي", total.toString(), Colors.white),
-          _buildStatItem("حضور", present.toString(), Colors.green.shade300),
-          _buildStatItem("غياب", absent.toString(), Colors.red.shade300),
+          _buildStatItem('total'.tr(context), total.toString(), Colors.white),
+          _buildStatItem(
+            'present'.tr(context),
+            present.toString(),
+            Colors.green.shade300,
+          ),
+          _buildStatItem(
+            'absent'.tr(context),
+            absent.toString(),
+            Colors.red.shade300,
+          ),
         ],
       ),
     );
@@ -1571,7 +1790,7 @@ class _AttendancePageState extends State<AttendancePage> {
         controller: _searchController,
         textAlign: TextAlign.right,
         decoration: InputDecoration(
-          hintText: "بحث عن اسم...",
+          hintText: 'search_by_name'.tr(context),
           hintStyle: TextStyle(color: Colors.grey.shade400),
           prefixIcon: const Icon(Icons.search, color: Colors.blue),
           border: InputBorder.none,
@@ -1581,7 +1800,7 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 
   Widget _buildKidCard(AttendanceKid kid, bool isAdminOrSupervisor) {
-    final bool isServant = widget.type == "خدام";
+    final bool isServant = widget.type == 'servants';
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
@@ -1601,7 +1820,7 @@ class _AttendancePageState extends State<AttendancePage> {
         borderRadius: BorderRadius.circular(15),
         onTap: () => _togglePresent(kid),
         onLongPress: () async {
-          if (widget.type == "خدام" && isAdminOrSupervisor && _canWrite) {
+          if (widget.type == 'servants' && isAdminOrSupervisor && _canWrite) {
             final doc = await _getServantData(kid.name);
             if (doc != null) {
               _showEditServantDialog(
@@ -1652,8 +1871,10 @@ class _AttendancePageState extends State<AttendancePage> {
                       radius: 26,
                       backgroundColor: Colors.grey.shade200,
                       backgroundImage: kid.localImagePath != null
-                          ? FileImage(File(kid.localImagePath!))
-                                as ImageProvider
+                          ? (kIsWeb
+                                ? NetworkImage(kid.localImagePath!)
+                                : FileImage(File(kid.localImagePath!))
+                                      as ImageProvider)
                           : (kid.photoUrl != null && kid.photoUrl!.isNotEmpty)
                           ? CachedNetworkImageProvider(
                               kid.photoUrl!,
@@ -1742,9 +1963,11 @@ class _AttendancePageState extends State<AttendancePage> {
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Text(
-          widget.type == 'خدام'
-              ? "حضور الخدام - ${widget.grade}"
-              : "حضور - ${widget.grade}",
+          widget.type == 'servants'
+              ? 'servants_attendance_grade'
+                    .tr(context)
+                    .replaceFirst('%s', widget.grade)
+              : 'attendance_grade'.tr(context).replaceFirst('%s', widget.grade),
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.transparent,
@@ -1782,14 +2005,20 @@ class _AttendancePageState extends State<AttendancePage> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.orange.shade300),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                      SizedBox(width: 8),
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.orange,
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          "⚠️ تنبيه: اشتراك المجموعة منتهي. وضع القراءة فقط مفعل.",
-                          style: TextStyle(color: Colors.white, fontSize: 12),
+                          'subscription_read_only_warning'.tr(context),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
                           textAlign: TextAlign.right,
                         ),
                       ),
@@ -1817,7 +2046,8 @@ class _AttendancePageState extends State<AttendancePage> {
                               isAdminOrSupervisor,
                             );
 
-                            if (isAdminOrSupervisor && widget.type == 'خدام') {
+                            if (isAdminOrSupervisor &&
+                                widget.type == 'servants') {
                               return Dismissible(
                                 key: Key(kid.id),
                                 direction: (_currentUserRole == 'admin')
@@ -1825,26 +2055,34 @@ class _AttendancePageState extends State<AttendancePage> {
                                     : DismissDirection.none,
                                 confirmDismiss: (direction) async {
                                   if (!_canWrite) {
-                                    _showSnackbar("⚠️ انتهت صلاحية الاشتراك");
+                                    _showSnackbar(
+                                      'subscription_expired_read_only'.tr(
+                                        context,
+                                      ),
+                                    );
                                     return false;
                                   }
                                   return await showDialog<bool>(
                                     context: context,
                                     builder: (context) => AlertDialog(
-                                      title: const Text("تأكيد الحذف"),
+                                      title: Text(
+                                        'confirm_deletion'.tr(context),
+                                      ),
                                       content: Text(
-                                        "هل أنت متأكد من حذف ${kid.name}؟",
+                                        'are_you_sure_delete'
+                                            .tr(context)
+                                            .replaceFirst('%s', kid.name),
                                       ),
                                       actions: [
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.pop(context, false),
-                                          child: const Text("إلغاء"),
+                                          child: Text('cancel'.tr(context)),
                                         ),
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.pop(context, true),
-                                          child: const Text("حذف"),
+                                          child: Text('delete'.tr(context)),
                                         ),
                                       ],
                                     ),
@@ -1900,7 +2138,10 @@ class _AttendancePageState extends State<AttendancePage> {
           ),
         ),
       ),
-      floatingActionButton: (_currentUserRole == 'admin' && _canWrite)
+      floatingActionButton:
+          (_currentUserRole == 'admin' &&
+              _canWrite &&
+              widget.type == 'servants')
           ? FloatingActionButton(
               onPressed: _showAddServantDialog,
               child: const Icon(Icons.add),

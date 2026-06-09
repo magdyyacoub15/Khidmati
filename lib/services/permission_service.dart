@@ -2,6 +2,70 @@ import 'package:appwrite/appwrite.dart';
 import '../services/appwrite_service.dart';
 import 'subscription_service.dart';
 
+/*
+  ===========================================================================
+  🚨 SERVER-SIDE SECURITY NOTICE (APPWRITE CLOUD FUNCTION REQUIRED) 🚨
+  ===========================================================================
+  While the app prevents expired users from seeing Edit/Add buttons, the 
+  Appwrite server itself STILL trusts the "team:TEAM_ID" permission natively.
+  This means an expired user can use Postman/Python to edit the database.
+
+  To fix this SERVER-SIDE loophole, you must create a CRON Cloud Function
+  in your Appwrite Console (e.g. Node.js 18.0) that runs every day and
+  removes 'update' and 'delete' permissions from groups whose 
+  `subscriptionEndDate` has passed.
+
+  **Copy & Paste this Node.js Appwrite Function:**
+  
+  ```javascript
+  const sdk = require('node-appwrite');
+
+  module.exports = async function (req, res) {
+    const client = new sdk.Client();
+    const databases = new sdk.Databases(client);
+
+    client
+      .setEndpoint('YOUR_ENDPOINT')
+      .setProject('YOUR_PROJECT_ID')
+      .setKey('YOUR_API_KEY'); // Requires Database Read/Write scopes
+
+    try {
+      const dbId = 'main_db'; 
+      const now = new Date();
+      
+      // Get all groups
+      const response = await databases.listDocuments(dbId, 'groups', [
+        sdk.Query.limit(100)
+      ]);
+
+      for (const group of response.documents) {
+        if (group.subscriptionEndDate) {
+          const endDate = new Date(group.subscriptionEndDate);
+          
+          if (endDate < now) {
+            // Subscription Expired! Downgrade permissions to Read-Only
+            const teamId = group.teamId;
+            const readOnlyPerms = [
+              sdk.Permission.read(sdk.Role.team(teamId))
+              // Intentionally stripping update() and delete()
+            ];
+            
+            // Note: You must loop through your collections (students, visits, etc.)
+            // and apply `readOnlyPerms` to documents where teamId matches, 
+            // OR handle it at the collection level if using Dynamic Roles.
+            console.log(`Group ${group.name} expired. (Team: ${teamId})`);
+          }
+        }
+      }
+      res.json({ success: true, message: "Checked subscriptions." });
+    } catch (error) {
+      res.json({ success: false, error: error.message });
+    }
+  };
+  ```
+  ===========================================================================
+*/
+
 class PermissionService {
   static final Account _account = AppwriteService().account;
   static final Databases _databases = AppwriteService().databases;

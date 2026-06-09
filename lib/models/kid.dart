@@ -1,6 +1,7 @@
 import 'package:appwrite/models.dart' as models;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../l10n/app_translations.dart';
 
 class Kid {
   final String id;
@@ -18,6 +19,7 @@ class Kid {
   final String? grade;
   final String? photoUrl;
   final String? localImagePath; // ⚡ Local Path for Optimistic UI
+  final int points; // 🏆 Points System
 
   Kid({
     required this.id,
@@ -35,6 +37,7 @@ class Kid {
     this.grade,
     this.photoUrl,
     this.localImagePath,
+    this.points = 0,
   });
 
   Kid copyWithStatus({
@@ -50,6 +53,8 @@ class Kid {
     DateTime? dateOfBirth,
     String? locationUrl,
     String? localImagePath,
+    String? grade,
+    int? points,
   }) {
     return Kid(
       id: id,
@@ -64,9 +69,10 @@ class Kid {
       visitedBy: visitedBy ?? this.visitedBy,
       createdAt: createdAt,
       locationUrl: locationUrl ?? this.locationUrl,
-      grade: grade,
+      grade: grade ?? this.grade,
       photoUrl: photoUrl ?? this.photoUrl,
       localImagePath: localImagePath ?? this.localImagePath,
+      points: points ?? this.points,
     );
   }
 
@@ -105,6 +111,7 @@ class Kid {
       locationUrl: data['locationUrl'],
       grade: data['grade'],
       photoUrl: data['photoUrl'],
+      points: data['points'] ?? 0,
     );
   }
 
@@ -134,13 +141,48 @@ class Kid {
     return map;
   }
 
-  String getPhoneWithOwner(String phone) {
+  String getPhoneWithOwner(BuildContext context, String phone) {
+    String? owner;
     if (phone == phoneRequired) {
-      return '${phoneRequiredOwner != null ? '$phoneRequiredOwner: ' : ''}$phone';
+      owner = phoneRequiredOwner;
     } else if (phone == phoneOptional) {
-      return '${phoneOptionalOwner != null ? '$phoneOptionalOwner: ' : ''}$phone';
+      owner = phoneOptionalOwner;
     }
-    return phone;
+
+    if (owner == null || owner.isEmpty) return phone;
+
+    // 🗺️ Map common roles (including legacy Arabic) to translation keys
+    String key = owner;
+    switch (owner) {
+      case 'الاب':
+      case 'Father':
+        key = 'phone_owner_father';
+        break;
+      case 'الام':
+      case 'Mother':
+        key = 'phone_owner_mother';
+        break;
+      case 'الاخ':
+      case 'Brother':
+        key = 'phone_owner_brother';
+        break;
+      case 'الاخت':
+      case 'Sister':
+        key = 'phone_owner_sister';
+        break;
+      case 'المخدوم':
+      case 'Kid':
+      case 'Student':
+        key = 'phone_owner_kid';
+        break;
+      case 'الخادم':
+      case 'Servant':
+        key = 'phone_owner_servant';
+        break;
+    }
+
+    final translatedOwner = key.tr(context);
+    return '$translatedOwner: $phone';
   }
 
   Map<String, dynamic> toMap() {
@@ -159,6 +201,7 @@ class Kid {
       'locationUrl': locationUrl,
       'grade': grade,
       'photoUrl': photoUrl,
+      'points': points,
     };
   }
 
@@ -182,6 +225,7 @@ class Kid {
       locationUrl: map['locationUrl'],
       grade: map['grade'],
       photoUrl: map['photoUrl'],
+      points: map['points'] ?? 0,
     );
   }
 
@@ -235,16 +279,16 @@ class Kid {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('لا يمكن فتح الخرائط')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('cannot_open_map'.tr(context))),
+          );
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('خطأ في رابط العنوان')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('address_link_error'.tr(context))),
+        );
       }
     }
   }

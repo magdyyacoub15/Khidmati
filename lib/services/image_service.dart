@@ -1,4 +1,6 @@
-import 'dart:io';
+// 🚀 Required for Uint8List is in foundation.dart
+import 'package:universal_io/io.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:appwrite/appwrite.dart';
 import 'appwrite_service.dart';
@@ -10,16 +12,54 @@ class ImageService {
   static const String bucketId = 'images';
 
   /// Uploads an image to Appwrite Storage and returns its ID
-  Future<Map<String, String>?> uploadImage(File imageFile) async {
+  Future<Map<String, String>?> uploadImage(dynamic imageFile) async {
     try {
+      InputFile fileInput;
+
+      if (kIsWeb) {
+        // Web: Use bytes
+        if (imageFile is Uint8List) {
+          fileInput = InputFile.fromBytes(
+            bytes: imageFile,
+            filename: 'image_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          );
+        } else if (imageFile is XFile) {
+          // 🚀 Robust check for XFile on web
+          final bytes = await imageFile.readAsBytes();
+          fileInput = InputFile.fromBytes(
+            bytes: bytes,
+            filename: imageFile.name,
+          );
+        } else {
+          debugPrint(
+            "⚠️ Web Upload: Unsupported type ${imageFile.runtimeType}",
+          );
+          throw Exception("Unsupported image type for Web upload");
+        }
+      } else {
+        // Mobile: Use path
+        String path = '';
+        if (imageFile is File) {
+          path = imageFile.path;
+        } else if (imageFile is XFile) {
+          path = imageFile.path;
+        } else if (imageFile is String) {
+          path = imageFile;
+        } else {
+          debugPrint(
+            "⚠️ Mobile Upload: Unsupported type ${imageFile.runtimeType}",
+          );
+          throw Exception("Unsupported image type for Mobile upload");
+        }
+        fileInput = InputFile.fromPath(path: path);
+      }
+
       final file = await _storage.createFile(
         bucketId: bucketId,
         fileId: ID.unique(),
-        file: InputFile.fromPath(path: imageFile.path),
+        file: fileInput,
       );
 
-      // بمان أننا سنقوم بعرض الصورة لاحقاً، سنحتاج لرابط العرض
-      // روابط Appwrite تعتمد على الـ Endpoint والـ ProjectID والـ BucketID والـ FileID
       final imageUrl =
           '${AppwriteService.endpoint}/storage/buckets/$bucketId/files/${file.$id}/view?project=${AppwriteService.projectId}';
 

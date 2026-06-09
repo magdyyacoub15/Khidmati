@@ -23,7 +23,7 @@ class NotificationService {
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
   StreamSubscription? _realtimeSubscription;
 
   Future<void> init() async {
@@ -336,7 +336,6 @@ class NotificationService {
           'title': title,
           'body': body,
           'createdAt': DateTime.now().toIso8601String(),
-          'teamId': teamId,
         },
         permissions: teamId != null
             ? [Permission.read(Role.team(teamId))]

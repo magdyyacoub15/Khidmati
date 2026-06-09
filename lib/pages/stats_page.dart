@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'visited_stats_page.dart';
 import 'attendance_stats_page.dart';
 import 'detailed_report_page.dart';
+import '../l10n/app_translations.dart';
 
 class StatsHomePage extends StatelessWidget {
   const StatsHomePage({super.key});
@@ -23,11 +24,11 @@ class StatsHomePage extends StatelessWidget {
           children: [
             Column(
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
                   child: Text(
-                    "الإحصائيات",
-                    style: TextStyle(
+                    'statistics_title'.tr(context),
+                    style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
@@ -41,21 +42,21 @@ class StatsHomePage extends StatelessWidget {
                       children: [
                         _buildButton(
                           context,
-                          "إحصائيات الافتقاد",
+                          'visitation_statistics'.tr(context),
                           Icons.search,
                           VisitedStatsPage(),
                         ),
                         const SizedBox(height: 30),
                         _buildButton(
                           context,
-                          "إحصائيات الحضور",
+                          'attendance_statistics'.tr(context),
                           Icons.check_circle,
                           const AttendanceStatsPage(),
                         ),
                         const SizedBox(height: 30),
                         _buildButton(
                           context,
-                          "التقارير التفصيلية",
+                          'detailed_reports'.tr(context),
                           Icons.picture_as_pdf,
                           const DetailedReportPage(),
                         ),

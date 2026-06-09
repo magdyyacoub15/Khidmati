@@ -9,6 +9,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import '../l10n/app_translations.dart';
 
 class ReportsLogPage extends StatefulWidget {
   const ReportsLogPage({super.key});
@@ -30,8 +31,8 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
 
   String _myGroupId = '';
   bool _isLoading = true;
-  String _selectedCategory = "الحضور"; // الحضور / الافتقاد
-  String _selectedType = "مخدومين"; // خدام / مخدومين
+  String _selectedCategory = 'attendance_category'; // الحضور / الافتقاد
+  String _selectedType = 'kids_type'; // خدام / مخدومين
   List<models.Document> _reports = [];
 
   @override
@@ -67,7 +68,7 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
   Future<void> _fetchReports() async {
     setState(() => _isLoading = true);
     try {
-      final collectionId = _selectedCategory == "الحضور"
+      final collectionId = _selectedCategory == 'attendance_category'
           ? attendanceRecordsCollectionId
           : visitedReportsCollectionId;
 
@@ -77,9 +78,17 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
         Query.limit(100),
       ];
 
-      // Only attendance has a 'type' field in the main record for now based on attendance_stats_page.dart
-      if (_selectedCategory == "الحضور") {
-        queries.add(Query.equal('type', _selectedType));
+      // Use fixed database strings for query to ensure consistency across languages
+      if (_selectedCategory == 'attendance_category') {
+        final List<String> typeQueries = [];
+        if (_selectedType == 'servants_type') {
+          typeQueries.addAll(['servants', 'خدام']);
+        } else {
+          typeQueries.addAll(['attendees', 'مخدومين']);
+        }
+        queries.add(
+          Query.or(typeQueries.map((t) => Query.equal('type', t)).toList()),
+        );
       }
 
       final result = await _databases.listDocuments(
@@ -103,7 +112,7 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("سجل التقارير التاريخية")),
+      appBar: AppBar(title: Text('historical_reports_log'.tr(context))),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -133,16 +142,16 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       child: SegmentedButton<String>(
-        segments: const [
+        segments: [
           ButtonSegment(
-            value: "الحضور",
-            label: Text("الحضور"),
-            icon: Icon(Icons.check_circle),
+            value: 'attendance_category',
+            label: Text('attendance_category'.tr(context)),
+            icon: const Icon(Icons.check_circle),
           ),
           ButtonSegment(
-            value: "الافتقاد",
-            label: Text("الافتقاد"),
-            icon: Icon(Icons.search),
+            value: 'visitation_category',
+            label: Text('visitation_category'.tr(context)),
+            icon: const Icon(Icons.search),
           ),
         ],
         selected: {_selectedCategory},
@@ -161,9 +170,15 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SegmentedButton<String>(
-        segments: const [
-          ButtonSegment(value: "مخدومين", label: Text("مخدومين")),
-          ButtonSegment(value: "خدام", label: Text("خدام")),
+        segments: [
+          ButtonSegment(
+            value: 'kids_type',
+            label: Text('kids_type'.tr(context)),
+          ),
+          ButtonSegment(
+            value: 'servants_type',
+            label: Text('servants_type'.tr(context)),
+          ),
         ],
         selected: {_selectedType},
         onSelectionChanged: (val) {
@@ -179,15 +194,17 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
 
   Widget _buildReportsList() {
     if (_reports.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
-          "لا توجد تقارير في هذا القسم",
-          style: TextStyle(color: Colors.white, fontSize: 16),
+          'no_reports_in_section'.tr(context),
+          style: const TextStyle(color: Colors.white, fontSize: 16),
         ),
       );
     }
 
-    return ListView.builder(
+    return RefreshIndicator(
+      onRefresh: _fetchReports,
+      child: ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _reports.length,
       itemBuilder: (context, index) {
@@ -205,47 +222,84 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
               name,
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            subtitle: Text(DateFormat('yyyy/MM/dd HH:mm').format(date)),
+            subtitle: Text(
+              DateFormat(
+                'yyyy/MM/dd HH:mm',
+                Localizations.localeOf(context).languageCode,
+              ).format(date),
+            ),
             trailing: IconButton(
               icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
-              onPressed: () => _printReport(doc),
+              onPressed: () => _printReport(context, doc),
             ),
           ),
         );
       },
+    ),
     );
   }
 
-  Future<void> _printReport(models.Document reportDoc) async {
+  Future<void> _printReport(
+    BuildContext flutterContext,
+    models.Document reportDoc,
+  ) async {
     try {
-      if (_selectedCategory == "الحضور") {
-        await _printAttendanceReport(reportDoc);
+      if (_selectedCategory == 'attendance_category') {
+        await _printAttendanceReport(flutterContext, reportDoc);
       } else {
-        await _printVisitReport(reportDoc);
+        await _printVisitReport(flutterContext, reportDoc);
       }
     } catch (e) {
       debugPrint("Error printing report: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("حدث خطأ أثناء طباعة التقرير: $e")),
+          SnackBar(content: Text('${'error_printing_report'.tr(context)}: $e')),
         );
       }
     }
   }
 
-  Future<void> _printAttendanceReport(models.Document reportDoc) async {
+  Future<void> _printAttendanceReport(
+    BuildContext flutterContext,
+    models.Document reportDoc,
+  ) async {
     final pdf = pw.Document();
-    final fontData = await rootBundle.load("assets/fonts/Alfares.ttf");
+    final fontData = await rootBundle.load('assets/fonts/Alfares.ttf');
     final ttf = pw.Font.ttf(fontData);
 
-    final dynamic dataField = reportDoc.data['data'];
-    if (dataField == null) throw "بيانات التقرير غير متوفرة";
+    Map<String, dynamic> rawMap = {};
+    final fileId = reportDoc.data['fileId'] as String?;
 
-    final Map<String, dynamic> rawMap = (dataField is String)
-        ? jsonDecode(dataField)
-        : Map<String, dynamic>.from(dataField);
+    if (fileId != null && fileId.isNotEmpty) {
+      try {
+        final byteList = await AppwriteService().storage.getFileDownload(
+          bucketId: AppwriteService.attendanceBucketId,
+          fileId: fileId,
+        );
+        final jsonString = utf8.decode(byteList);
+        rawMap = jsonDecode(jsonString);
+      } catch (e) {
+        debugPrint("Error fetching attendance report file: $e");
+        if (!flutterContext.mounted) return;
+        throw 'failed_to_load_report_file'.tr(flutterContext);
+      }
+    } else {
+      final dynamic dataField = reportDoc.data['data'];
+      if (dataField == null) {
+        if (!flutterContext.mounted) return;
+        throw 'report_data_unavailable'.tr(flutterContext);
+      }
 
-    final reportName = reportDoc.data['reportName'] ?? "تقرير حضور";
+      rawMap = (dataField is String)
+          ? jsonDecode(dataField)
+          : Map<String, dynamic>.from(dataField);
+    }
+
+    final reportName =
+        reportDoc.data['reportName'] ??
+        (flutterContext.mounted
+            ? 'attendance_report_default_name'.tr(flutterContext)
+            : 'Report');
     final timestamp = reportDoc.data['timestamp'] ?? "";
 
     pdf.addPage(
@@ -278,7 +332,9 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
               pw.Padding(
                 padding: const pw.EdgeInsets.symmetric(vertical: 10),
                 child: pw.Text(
-                  "🔹 فصل: $grade",
+                  'grade_label_pdf'
+                      .tr(flutterContext)
+                      .replaceFirst('%s', grade),
                   style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
@@ -291,11 +347,18 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
             final List<dynamic> list = listDynamic as List<dynamic>;
             widgets.add(
               pw.TableHelper.fromTextArray(
-                headers: ['الاسم', 'الحالة', 'بواسطة', 'ملاحظات'],
+                headers: [
+                  'name'.tr(flutterContext),
+                  'status'.tr(flutterContext),
+                  'by'.tr(flutterContext),
+                  'notes'.tr(flutterContext),
+                ],
                 data: list.map((item) {
                   return [
                     item['name'] ?? "",
-                    (item['isPresent'] == true) ? "✅ حاضر" : "❌ غائب",
+                    (item['isPresent'] == true)
+                        ? 'present_status'.tr(flutterContext)
+                        : 'absent_status'.tr(flutterContext),
                     item['markedBy'] ?? "",
                     item['note'] ?? "",
                   ];
@@ -324,20 +387,70 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
     );
   }
 
-  Future<void> _printVisitReport(models.Document reportDoc) async {
+  Future<void> _printVisitReport(
+    BuildContext flutterContext,
+    models.Document reportDoc,
+  ) async {
+    final reportDefaultName = 'visitation_report_default_name'.tr(
+      flutterContext,
+    );
+    final failedLoadReportMsg = 'failed_to_load_report_file'.tr(flutterContext);
+    final noReportDataMsg = 'no_report_data'.tr(flutterContext);
+
     final pdf = pw.Document();
-    final fontData = await rootBundle.load("assets/fonts/Alfares.ttf");
+    final fontData = await rootBundle.load('assets/fonts/Alfares.ttf');
     final ttf = pw.Font.ttf(fontData);
 
-    // Visit reports store details in visited_reports_details collection
-    final detailsResult = await _databases.listDocuments(
-      databaseId: databaseId,
-      collectionId: visitedReportsDetailsCollectionId,
-      queries: [Query.equal('reportId', reportDoc.$id), Query.limit(100)],
-    );
-
-    final reportName = reportDoc.data['reportName'] ?? "تقرير افتقاد";
+    final reportName = reportDoc.data['reportName'] ?? reportDefaultName;
     final timestamp = reportDoc.data['timestamp'] ?? "";
+    Map<String, dynamic> fullReportData = {};
+
+    // 1. Try fileId
+    final fileId = reportDoc.data['fileId'] as String?;
+    if (fileId != null && fileId.isNotEmpty) {
+      try {
+        final byteList = await AppwriteService().storage.getFileDownload(
+          bucketId:
+              AppwriteService.attendanceBucketId, // Same bucket as attendance
+          fileId: fileId,
+        );
+        final jsonString = utf8.decode(byteList);
+        fullReportData = jsonDecode(jsonString);
+      } catch (e) {
+        debugPrint("Error fetching visit report file: $e");
+        throw failedLoadReportMsg;
+      }
+    } else {
+      // 2. Fallback to legacy `visited_reports_details`
+      try {
+        final detailsResult = await _databases.listDocuments(
+          databaseId: databaseId,
+          collectionId: visitedReportsDetailsCollectionId,
+          queries: [Query.equal('reportId', reportDoc.$id), Query.limit(100)],
+        );
+
+        // Convert legacy structure to new structure map
+        for (var detailDoc in detailsResult.documents) {
+          final grade = detailDoc.data['grade'] ?? "";
+          final List<dynamic> visited =
+              (detailDoc.data['visited'] as List? ?? [])
+                  .map((e) => (e is String) ? jsonDecode(e) : e)
+                  .toList();
+          final List<dynamic> unvisited =
+              (detailDoc.data['unvisited'] as List? ?? [])
+                  .map((e) => (e is String) ? jsonDecode(e) : e)
+                  .toList();
+
+          fullReportData[grade] = {"visited": visited, "unvisited": unvisited};
+        }
+      } catch (e) {
+        debugPrint("Legacy fetch failed: $e");
+      }
+    }
+
+    if (fullReportData.isEmpty) {
+      throw noReportDataMsg;
+    }
 
     pdf.addPage(
       pw.MultiPage(
@@ -364,13 +477,18 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
             pw.SizedBox(height: 20),
           ];
 
-          for (var detailDoc in detailsResult.documents) {
-            final grade = detailDoc.data['grade'] ?? "";
+          // Sort grades if possible (keys are grades)
+          final sortedKeys = fullReportData.keys.toList()..sort();
+
+          for (var grade in sortedKeys) {
+            final gradeData = fullReportData[grade];
             widgets.add(
               pw.Padding(
                 padding: const pw.EdgeInsets.symmetric(vertical: 10),
                 child: pw.Text(
-                  "🔹 فصل: $grade",
+                  'grade_label_pdf'
+                      .tr(flutterContext)
+                      .replaceFirst('%s', grade),
                   style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
@@ -380,42 +498,53 @@ class _ReportsLogPageState extends State<ReportsLogPage> {
               ),
             );
 
-            final List<dynamic> visited =
-                (detailDoc.data['visited'] as List? ?? [])
-                    .map((e) => (e is String) ? jsonDecode(e) : e)
-                    .toList();
-            final List<dynamic> unvisited =
-                (detailDoc.data['unvisited'] as List? ?? [])
-                    .map((e) => (e is String) ? jsonDecode(e) : e)
-                    .toList();
+            final List<dynamic> visited = gradeData['visited'] ?? [];
+            final List<dynamic> unvisited = gradeData['unvisited'] ?? [];
 
             final List<List<String>> tableData = [];
             for (var v in visited) {
               tableData.add([
                 v['name'] ?? "",
-                "✅ تم افتقاده",
+                'visited_status'.tr(flutterContext),
                 v['visitedBy'] ?? "",
               ]);
             }
             for (var u in unvisited) {
-              tableData.add([u['name'] ?? "", "❌ لم يتم افتقاده", ""]);
+              tableData.add([
+                u['name'] ?? "",
+                'not_visited_status'.tr(flutterContext),
+                "",
+              ]);
             }
 
-            widgets.add(
-              pw.TableHelper.fromTextArray(
-                headers: ['الاسم', 'الحالة', 'بواسطة'],
-                data: tableData,
-                headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  font: ttf,
+            if (tableData.isNotEmpty) {
+              widgets.add(
+                pw.TableHelper.fromTextArray(
+                  headers: [
+                    'name'.tr(flutterContext),
+                    'status'.tr(flutterContext),
+                    'by'.tr(flutterContext),
+                  ],
+                  data: tableData,
+                  headerStyle: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    font: ttf,
+                  ),
+                  cellStyle: pw.TextStyle(font: ttf),
+                  headerDecoration: const pw.BoxDecoration(
+                    color: PdfColors.grey300,
+                  ),
+                  cellAlignment: pw.Alignment.center,
                 ),
-                cellStyle: pw.TextStyle(font: ttf),
-                headerDecoration: const pw.BoxDecoration(
-                  color: PdfColors.grey300,
+              );
+            } else {
+              widgets.add(
+                pw.Text(
+                  'no_detailed_data_for_grade'.tr(flutterContext),
+                  style: pw.TextStyle(font: ttf),
                 ),
-                cellAlignment: pw.Alignment.center,
-              ),
-            );
+              );
+            }
           }
 
           return widgets;

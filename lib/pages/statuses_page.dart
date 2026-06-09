@@ -7,6 +7,7 @@ import '../services/appwrite_service.dart';
 import 'package:intl/intl.dart';
 import '../services/status_service.dart';
 import '../services/permission_service.dart';
+import '../l10n/app_translations.dart';
 
 class StatusesPage extends StatefulWidget {
   const StatusesPage({super.key});
@@ -59,7 +60,7 @@ class _StatusesPageState extends State<StatusesPage> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = "حدث خطأ أثناء تحميل البيانات";
+          _errorMessage = 'error_loading_data'.tr(context);
         });
       }
     }
@@ -88,7 +89,7 @@ class _StatusesPageState extends State<StatusesPage> {
                     : (_errorMessage != null || _statusService == null)
                     ? Center(
                         child: Text(
-                          _errorMessage ?? "تعذر تحميل البيانات",
+                          _errorMessage ?? 'failed_to_load_data'.tr(context),
                           style: const TextStyle(color: Colors.white),
                         ),
                       )
@@ -106,9 +107,9 @@ class _StatusesPageState extends State<StatusesPage> {
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
         children: [
-          const Text(
-            "الحالات",
-            style: TextStyle(
+          Text(
+            'statuses'.tr(context),
+            style: const TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
               color: Colors.white,
@@ -122,14 +123,14 @@ class _StatusesPageState extends State<StatusesPage> {
                 color: Colors.white24,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.lock_outline, color: Colors.white, size: 16),
-                  SizedBox(width: 8),
+                  const Icon(Icons.lock_outline, color: Colors.white, size: 16),
+                  const SizedBox(width: 8),
                   Text(
-                    "وضع القراءة فقط (انتهى الاشتراك)",
-                    style: TextStyle(color: Colors.white, fontSize: 12),
+                    'readonly_mode_expired'.tr(context),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ],
               ),
@@ -185,7 +186,12 @@ class _StatusesPageState extends State<StatusesPage> {
           return timeB.compareTo(timeA);
         });
 
-        return ListView.builder(
+        return RefreshIndicator(
+          onRefresh: () async {
+            await Future.delayed(const Duration(milliseconds: 500));
+            setState(() {});
+          },
+          child: ListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 10),
           itemCount: userIds.length,
           itemBuilder: (context, index) {
@@ -193,6 +199,7 @@ class _StatusesPageState extends State<StatusesPage> {
             final userStatuses = groupedStatuses[userId]!;
             return _buildUserStatusTile(userId, userStatuses);
           },
+        ),
         );
       },
     );
@@ -240,6 +247,7 @@ class _StatusesPageState extends State<StatusesPage> {
           statusService: _statusService!,
           currentUserId: _currentUserId,
           canWrite: _canWrite,
+          groupId: _myGroupId,
         ),
       ),
     );
@@ -252,14 +260,14 @@ class _StatusesPageState extends State<StatusesPage> {
         children: [
           Icon(Icons.style_outlined, size: 80, color: Colors.blue.shade100),
           const SizedBox(height: 16),
-          const Text(
-            "لا توجد حالات حالياً",
-            style: TextStyle(fontSize: 18, color: Colors.white70),
+          Text(
+            'no_statuses_now'.tr(context),
+            style: const TextStyle(fontSize: 18, color: Colors.white70),
           ),
           const SizedBox(height: 8),
-          const Text(
-            "تظهر هنا الصور المرفوعة خلال آخر 24 ساعة",
-            style: TextStyle(fontSize: 14, color: Colors.white54),
+          Text(
+            'images_uploaded_last_24h'.tr(context),
+            style: const TextStyle(fontSize: 14, color: Colors.white54),
           ),
         ],
       ),
@@ -272,6 +280,7 @@ class StoryPlayerPage extends StatefulWidget {
   final StatusService statusService;
   final String currentUserId;
   final bool canWrite;
+  final String groupId;
 
   const StoryPlayerPage({
     super.key,
@@ -279,6 +288,7 @@ class StoryPlayerPage extends StatefulWidget {
     required this.statusService,
     required this.currentUserId,
     required this.canWrite,
+    required this.groupId,
   });
 
   @override
@@ -530,24 +540,27 @@ class _StoryPlayerPageState extends State<StoryPlayerPage>
               ),
             ),
             const SizedBox(height: 15),
-            const Text(
-              "المشاهدات",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              'views_count_label'.tr(context),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const Divider(),
             if (viewers.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: Text("لا توجد مشاهدات بعد"),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text('no_views_yet'.tr(context)),
               )
             else
               SizedBox(
                 height: 300,
                 child: FutureBuilder<models.DocumentList>(
                   future: AppwriteService().databases.listDocuments(
-                    databaseId: 'main_db',
+                    databaseId: AppwriteService.databaseId,
                     collectionId: 'users_info',
-                    queries: [Query.limit(100)],
+                    queries: [
+                      Query.equal('groupId', widget.groupId),
+                      Query.limit(100),
+                    ],
                   ),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -567,10 +580,10 @@ class _StoryPlayerPageState extends State<StoryPlayerPage>
                     }).toList();
 
                     if (filteredUsers.isEmpty) {
-                      return const Padding(
-                        padding: EdgeInsets.all(20),
+                      return Padding(
+                        padding: const EdgeInsets.all(20),
                         child: Center(
-                          child: Text("لا توجد مشاهدات من مستخدمين آخرين"),
+                          child: Text('no_views_other_users'.tr(context)),
                         ),
                       );
                     }
@@ -587,7 +600,9 @@ class _StoryPlayerPageState extends State<StoryPlayerPage>
                                   "?",
                             ),
                           ),
-                          title: Text(userData['name'] ?? "مستخدم مجهول"),
+                          title: Text(
+                            userData['name'] ?? 'anonymous_user'.tr(context),
+                          ),
                           subtitle: Text(userData['role'] ?? ""),
                         );
                       },

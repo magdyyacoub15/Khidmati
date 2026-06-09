@@ -3,11 +3,12 @@ import 'package:appwrite/appwrite.dart';
 
 import 'appwrite_service.dart';
 import 'data_cache_service.dart';
+import 'sync_service.dart';
 
 class GradeService {
   final String groupId;
   final Databases _databases = AppwriteService().databases;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   static const String databaseId = AppwriteService.databaseId;
   static const String collectionId = 'grades';
@@ -89,6 +90,24 @@ class GradeService {
     );
     final teamId = groupDoc.data['teamId'];
 
+    final syncData = {'groupId': groupId, 'name': gradeName, 'teamId': teamId};
+
+    // 🚀 Offline Logic
+    final bool online = await SyncService().isOnline();
+    if (!online) {
+      await DataCacheService().addPendingOperation({
+        'type': 'study_class_add',
+        'data': syncData,
+      });
+      // Update cache
+      final currentGrades = await getGrades();
+      if (!currentGrades.contains(gradeName)) {
+        currentGrades.add(gradeName);
+        await DataCacheService().cacheGrades(groupId, currentGrades);
+      }
+      return;
+    }
+
     await _databases.createDocument(
       databaseId: databaseId,
       collectionId: collectionId,
@@ -112,6 +131,22 @@ class GradeService {
 
   /// حذف فصل
   Future<void> deleteGrade(String gradeName) async {
+    final syncData = {'groupId': groupId, 'name': gradeName};
+
+    // 🚀 Offline Logic
+    final bool online = await SyncService().isOnline();
+    if (!online) {
+      await DataCacheService().addPendingOperation({
+        'type': 'study_class_delete',
+        'data': syncData,
+      });
+      // Update cache
+      final currentGrades = await getGrades();
+      currentGrades.remove(gradeName);
+      await DataCacheService().cacheGrades(groupId, currentGrades);
+      return;
+    }
+
     final result = await _databases.listDocuments(
       databaseId: databaseId,
       collectionId: collectionId,
@@ -133,6 +168,29 @@ class GradeService {
 
   /// تعديل اسم فصل
   Future<void> updateGradeName(String oldName, String newName) async {
+    final syncData = {
+      'groupId': groupId,
+      'oldName': oldName,
+      'newName': newName,
+    };
+
+    // 🚀 Offline Logic
+    final bool online = await SyncService().isOnline();
+    if (!online) {
+      await DataCacheService().addPendingOperation({
+        'type': 'study_class_rename',
+        'data': syncData,
+      });
+      // Update cache
+      final currentGrades = await getGrades();
+      final idx = currentGrades.indexOf(oldName);
+      if (idx != -1) {
+        currentGrades[idx] = newName;
+        await DataCacheService().cacheGrades(groupId, currentGrades);
+      }
+      return;
+    }
+
     final result = await _databases.listDocuments(
       databaseId: databaseId,
       collectionId: collectionId,

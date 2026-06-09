@@ -33,7 +33,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   final Account _account = AppwriteService().account;
   final Databases _databases = AppwriteService().databases;
-  final Client _client = AppwriteService().client;
   late Realtime _realtime;
   RealtimeSubscription? _subscription;
 
@@ -48,7 +47,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    _realtime = Realtime(_client);
+    _realtime = AppwriteService().realtime;
     _setupAppwriteListener();
   }
 
@@ -590,7 +589,11 @@ class _DashboardPageState extends State<DashboardPage> {
                 ), // Removed bottom padding as BottomNavigationBar handles it
                 child: _isPendingApproval
                     ? _buildPendingEmptyState()
-                    : ListView(
+                    : RefreshIndicator(
+                        onRefresh: () async {
+                          await _syncData();
+                        },
+                        child: ListView(
                         children: [
                           GridView.count(
                             shrinkWrap: true,
@@ -668,6 +671,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                         ],
                       ),
+                    ),
               ),
             ),
           ],

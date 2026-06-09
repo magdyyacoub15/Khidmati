@@ -1,0 +1,15 @@
+Analyzing manger3...                                            
+
+   info - Don't use 'BuildContext's across async gaps - lib\pages\kids_list_page.dart:1079:48 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\kids_list_page.dart:1240:48 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\profile_page.dart:1011:57 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\referrals_page.dart:97:52 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:1032:68 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\pages\super_admin_page.dart:1041:61 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:829:27 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:830:27 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:831:27 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:1311:27 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:1312:27 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\pages\visited_stats_page.dart:1313:27 - use_build_context_synchronously
+

@@ -8,7 +8,7 @@ class StatusService {
   final String groupId;
   final Databases _databases = AppwriteService().databases;
   final Account _account = AppwriteService().account;
-  final Realtime _realtime = Realtime(AppwriteService().client);
+  final Realtime _realtime = AppwriteService().realtime;
 
   static const String databaseId = AppwriteService.databaseId;
   static const String collectionId = 'statuses';
@@ -166,7 +166,10 @@ class StatusService {
       final result = await _databases.listDocuments(
         databaseId: databaseId,
         collectionId: collectionId,
-        queries: [Query.equal('imageUrl', imageUrl)],
+        queries: [
+          Query.equal('groupId', groupId),
+          Query.equal('imageUrl', imageUrl),
+        ],
       );
 
       for (var doc in result.documents) {
